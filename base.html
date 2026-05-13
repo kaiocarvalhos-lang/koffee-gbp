@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{% block title %}GBP Analyzer{% endblock %} — Koffee</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      bg:'#080808', s1:'#0f0f0f', s2:'#141414', s3:'#1a1a1a',
+      b1:'#1f1f1f', b2:'#2a2a2a', b3:'#363636',
+      car:'#c8893c', gold:'#e8b96a', 'car-dim':'rgba(200,137,60,0.12)',
+      ok:'#22c55e', warn:'#f59e0b', bad:'#ef4444',
+      'ok-dim':'rgba(34,197,94,0.1)', 'warn-dim':'rgba(245,158,11,0.1)', 'bad-dim':'rgba(239,68,68,0.1)',
+      text:'#e2e2e2', muted:'#666', dim:'#3a3a3a'
+    },
+    fontFamily: {
+      syne:['Syne','sans-serif'],
+      dm:['DM Sans','sans-serif'],
+      mono:['DM Mono','monospace']
+    }
+  }}
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #080808; color: #e2e2e2; font-family: 'DM Sans', sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 99px; }
+
+  /* ── SCORE BADGES ── */
+  .score-ok   { background: rgba(34,197,94,.12);  color: #22c55e;  border: 1px solid rgba(34,197,94,.2); }
+  .score-warn { background: rgba(245,158,11,.12); color: #f59e0b;  border: 1px solid rgba(245,158,11,.2); }
+  .score-bad  { background: rgba(239,68,68,.12);  color: #ef4444;  border: 1px solid rgba(239,68,68,.2); }
+  .score-idle { background: #1a1a1a; color: #404040; border: 1px solid #262626; }
+
+  /* ── CARD ── */
+  .card { background: #0f0f0f; border: 1px solid #1f1f1f; border-radius: 12px; }
+  .card-hover { transition: border-color .2s, background .2s; }
+  .card-hover:hover { border-color: #2a2a2a; background: #141414; }
+
+  /* ── BUTTONS ── */
+  .btn-primary { background: #c8893c; color: #000; font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: .75rem; letter-spacing: .04em; border: none; border-radius: 8px; cursor: pointer; transition: all .2s; }
+  .btn-primary:hover { background: #e8b96a; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(200,137,60,.25); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-ghost { background: transparent; color: #666; font-family: 'DM Sans', sans-serif; font-size: .75rem; font-weight: 500; border: 1px solid #1f1f1f; border-radius: 8px; cursor: pointer; transition: all .2s; }
+  .btn-ghost:hover { border-color: #c8893c; color: #c8893c; background: rgba(200,137,60,.05); }
+  .btn-danger { background: transparent; color: #444; font-family: 'DM Sans', sans-serif; font-size: .75rem; border: 1px solid #1f1f1f; border-radius: 6px; cursor: pointer; transition: all .2s; }
+  .btn-danger:hover { border-color: rgba(239,68,68,.4); color: #ef4444; background: rgba(239,68,68,.06); }
+
+  /* ── INPUTS ── */
+  input[type="text"], input[type="email"], input[type="password"], input[type="search"], select, textarea {
+    background: #0a0a0a; border: 1px solid #1f1f1f; border-radius: 8px; color: #e2e2e2;
+    font-family: 'DM Sans', sans-serif; font-size: .82rem; outline: none;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: rgba(200,137,60,.5);
+    box-shadow: 0 0 0 3px rgba(200,137,60,.08);
+  }
+  input::placeholder, textarea::placeholder { color: #333; }
+  select option { background: #0f0f0f; }
+
+  /* ── TABLE ── */
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th { padding: 10px 16px; text-align: left; font-size: .65rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #404040; border-bottom: 1px solid #1a1a1a; white-space: nowrap; }
+  .data-table td { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,.03); vertical-align: middle; }
+  .data-table tbody tr { transition: background .1s; cursor: pointer; position: relative; }
+  .data-table tbody tr:hover td { background: rgba(255,255,255,.02); }
+  .data-table tbody tr:hover td:first-child { border-left: 2px solid #c8893c; }
+  .data-table tbody tr:last-child td { border-bottom: none; }
+
+  /* ── CHECKLIST ── */
+  .chk-ok  { background: rgba(34,197,94,.1);   color: #22c55e; border: 1px solid rgba(34,197,94,.2); }
+  .chk-no  { background: rgba(239,68,68,.08);  color: #ef4444; border: 1px solid rgba(239,68,68,.15); }
+  .chk-ver { background: rgba(245,158,11,.08); color: #f59e0b; border: 1px solid rgba(245,158,11,.2); }
+
+  /* ── PROGRESS ── */
+  .progress-track { height: 4px; background: #1a1a1a; border-radius: 99px; overflow: hidden; }
+  .progress-fill  { height: 100%; background: linear-gradient(90deg, #c8893c, #e8b96a); border-radius: 99px; transition: width .4s ease; }
+
+  /* ── MODAL ── */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); z-index: 100; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-backdrop.open { display: flex; }
+  .modal-box { background: #0f0f0f; border: 1px solid #1f1f1f; border-radius: 16px; width: 100%; max-height: 90vh; overflow-y: auto; animation: modalIn .2s ease; }
+  @keyframes modalIn { from { opacity:0; transform:scale(.97) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
+
+  /* ── STATUS DOTS ── */
+  .dot-ok   { width:6px; height:6px; border-radius:50%; background:#22c55e; display:inline-block; }
+  .dot-warn { width:6px; height:6px; border-radius:50%; background:#f59e0b; display:inline-block; }
+  .dot-bad  { width:6px; height:6px; border-radius:50%; background:#ef4444; display:inline-block; }
+
+  /* ── PRINT ── */
+  @media print { .no-print { display: none !important; } }
+</style>
+</head>
+<body class="min-h-screen">
+
+{% if session.user_id %}
+<!-- NAV -->
+<nav class="no-print sticky top-0 z-50 border-b border-b1" style="background:rgba(8,8,8,.92);backdrop-filter:blur(12px);">
+  <div class="max-w-screen-2xl mx-auto px-6 h-14 flex items-center justify-between gap-6">
+    <div class="flex items-center gap-6">
+      <!-- Logo -->
+      <a href="{{ url_for('dashboard') }}" class="flex items-center gap-2.5 group">
+        <div class="w-7 h-7 rounded-lg bg-car/10 border border-car/20 flex items-center justify-center text-car text-xs font-bold font-syne group-hover:bg-car/20 transition-colors">K</div>
+        <span class="font-syne font-bold text-sm text-text tracking-tight">GBP <span class="text-car">Analyzer</span></span>
+      </a>
+      <!-- Divider -->
+      <div class="w-px h-4 bg-b2 hidden md:block"></div>
+      <!-- Nav links -->
+      <div class="hidden md:flex items-center gap-1">
+        <a href="{{ url_for('dashboard') }}" class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all {% if request.endpoint == 'dashboard' %}bg-s3 text-text{% else %}text-muted hover:text-text hover:bg-s2{% endif %}">Dashboard</a>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="hidden md:flex items-center gap-2 px-3 py-1.5 bg-s2 rounded-lg border border-b1">
+        <div class="dot-ok"></div>
+        <span class="text-xs text-muted font-mono">{{ session.user_nome }}</span>
+      </div>
+      <a href="{{ url_for('logout') }}" class="text-xs text-muted hover:text-bad px-3 py-1.5 rounded-lg border border-b1 hover:border-bad/30 transition-all">Sair</a>
+    </div>
+  </div>
+</nav>
+{% endif %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="fixed top-16 right-4 z-50 space-y-2 no-print">
+  {% for cat, msg in messages %}
+  <div class="px-4 py-3 rounded-lg text-xs border shadow-xl {{ 'bg-s1 border-ok/30 text-ok' if cat != 'error' else 'bg-s1 border-bad/30 text-bad' }}">{{ msg }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

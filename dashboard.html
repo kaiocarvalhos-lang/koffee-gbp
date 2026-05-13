@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<div class="max-w-screen-2xl mx-auto px-6 py-8">
+
+  <!-- PAGE HEADER -->
+  <div class="flex items-start justify-between mb-8 gap-4 flex-wrap">
+    <div>
+      <div class="flex items-center gap-2 mb-1">
+        <h1 class="font-syne font-bold text-2xl text-text">Dashboard</h1>
+        {% if cat_filter %}
+        <span class="px-2 py-0.5 rounded-md bg-car/10 text-car text-xs font-medium border border-car/20">{{ cat_filter }}</span>
+        {% endif %}
+      </div>
+      <p class="text-xs text-muted">
+        {{ total }} negócios
+        {% if analisadas %} · <span class="text-text/50">{{ analisadas }} analisados</span>{% endif %}
+        {% if cat_filter %} · <a href="{{ url_for('dashboard') }}" class="text-car hover:underline">Ver todos</a>{% endif %}
+      </p>
+    </div>
+    <div class="flex gap-2 flex-wrap no-print">
+      <button onclick="abrirBusca()" class="btn-ghost px-4 py-2 flex items-center gap-1.5">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Adicionar negócio
+      </button>
+      <button onclick="abrirCSV()" class="btn-ghost px-4 py-2 flex items-center gap-1.5">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Importar CSV
+      </button>
+      <button onclick="analisarTodas()" id="btnAnalisar" class="btn-primary px-5 py-2 flex items-center gap-1.5">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Analisar todos
+      </button>
+    </div>
+  </div>
+
+  <!-- PROGRESS BAR -->
+  <div id="progressBlock" class="card p-5 mb-6 hidden no-print">
+    <div class="flex justify-between items-center mb-3">
+      <div class="flex items-center gap-2">
+        <div class="w-1.5 h-1.5 rounded-full bg-warn animate-pulse"></div>
+        <span class="text-sm font-medium text-text/80">Analisando negócios via Google…</span>
+      </div>
+      <span class="font-mono text-xs text-muted"><span id="progDone">0</span> / {{ total }}</span>
+    </div>
+    <div class="progress-track mb-2"><div class="progress-fill" id="progFill" style="width:0%"></div></div>
+    <p class="text-xs text-muted italic" id="progLabel">Aguardando…</p>
+  </div>
+
+  <!-- SUMMARY CARDS -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div class="card p-5 relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500/30 to-transparent"></div>
+      <div class="text-xs text-muted uppercase tracking-wider font-medium mb-3">Analisados</div>
+      <div class="font-syne font-bold text-3xl text-text">{{ analisadas }}</div>
+      <div class="text-xs text-muted mt-1">de {{ total }} negócios</div>
+    </div>
+    <div class="card p-5 relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-bad/40 to-transparent"></div>
+      <div class="text-xs text-muted uppercase tracking-wider font-medium mb-3">Score crítico</div>
+      <div class="font-syne font-bold text-3xl {{ 'text-bad' if criticas else 'text-text' }}">{{ criticas }}</div>
+      <div class="text-xs text-muted mt-1">abaixo de 50 pts</div>
+    </div>
+    <div class="card p-5 relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-warn/40 to-transparent"></div>
+      <div class="text-xs text-muted uppercase tracking-wider font-medium mb-3">Sem site próprio</div>
+      <div class="font-syne font-bold text-3xl {{ 'text-warn' if sem_site else 'text-text' }}">{{ sem_site }}</div>
+      <div class="text-xs text-muted mt-1">oportunidade de melhoria</div>
+    </div>
+    <div class="card p-5 relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-ok/30 to-transparent"></div>
+      <div class="text-xs text-muted uppercase tracking-wider font-medium mb-3">Score médio</div>
+      <div class="font-syne font-bold text-3xl {{ 'text-ok' if media_score >= 70 else 'text-warn' if media_score >= 50 else 'text-bad' }}">{{ media_score }}</div>
+      <div class="text-xs text-muted mt-1">pontos / 100</div>
+    </div>
+  </div>
+
+  <!-- CATEGORY FILTER -->
+  {% if categorias %}
+  <div class="flex gap-1.5 flex-wrap mb-5 no-print">
+    <a href="{{ url_for('dashboard') }}"
+       class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+              {% if not cat_filter %}bg-s3 border-b3 text-text{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
+      Todos <span class="ml-1 opacity-50">{{ total }}</span>
+    </a>
+    {% for cat in categorias %}
+    <a href="{{ url_for('dashboard', cat=cat) }}"
+       class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+              {% if cat_filter == cat %}bg-car/10 border-car/30 text-car{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
+      {{ cat }}
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- DATA TABLE -->
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        <span class="text-xs font-semibold text-muted uppercase tracking-wider">Resultados</span>
+        <span class="text-xs text-dim">— clique para ver diagnóstico</span>
+      </div>
+      <input type="text" id="searchBox" placeholder="Buscar negócio…" oninput="filtrar(this.value)"
+        class="w-48 py-1.5 px-3 text-xs" style="padding:6px 12px"/>
+    </div>
+
+    {% if neg_data %}
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:72px">Score</th>
+            <th>Negócio</th>
+            <th>Categoria</th>
+            <th>Cidade</th>
+            <th>Nota</th>
+            <th>Avaliações</th>
+            <th style="text-align:center">Site</th>
+            <th style="text-align:center">WA</th>
+            <th style="text-align:center">Horários</th>
+            <th>Última análise</th>
+            <th class="no-print" style="width:80px"></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          {% for d in neg_data %}
+          <tr class="neg-row" data-nome="{{ d.neg.nome|lower }} {{ d.neg.categoria|lower }} {{ d.neg.cidade|lower }}"
+              onclick="window.location='/negocio/{{ d.neg.id }}'">
+
+            <!-- Score -->
+            <td>
+              {% if d.ultimo %}
+              <span class="score-{{ score_class(d.ultimo.score) }} px-2.5 py-1 rounded-lg text-xs font-bold font-mono inline-block">
+                {{ d.ultimo.score }}
+              </span>
+              {% else %}
+              <span class="score-idle px-2.5 py-1 rounded-lg text-xs font-mono inline-block">—</span>
+              {% endif %}
+            </td>
+
+            <!-- Nome -->
+            <td>
+              <span class="font-medium text-text/90" style="max-width:180px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                {{ d.neg.nome }}
+              </span>
+            </td>
+
+            <!-- Categoria -->
+            <td>
+              <span class="text-xs px-2 py-0.5 rounded-md bg-s3 text-muted border border-b2">{{ d.neg.categoria }}</span>
+            </td>
+
+            <!-- Cidade -->
+            <td class="text-muted text-xs">{{ d.neg.cidade }}</td>
+
+            <!-- Nota -->
+            <td>
+              <span class="text-warn text-sm font-medium">{{ d.ultimo.nota if d.ultimo else d.neg.r_base }}</span>
+              <span class="text-warn text-xs opacity-60">★</span>
+            </td>
+
+            <!-- Avaliações -->
+            <td class="font-mono text-xs text-muted">{{ "{:,}".format(d.ultimo.avaliacoes if d.ultimo else d.neg.a_base) }}</td>
+
+            <!-- Site -->
+            <td style="text-align:center">
+              {% if d.ultimo %}
+                {% if d.ultimo.site_ok %}
+                  <span class="text-ok text-base">✓</span>
+                {% else %}
+                  <span class="text-bad/60 text-sm">✕</span>
+                {% endif %}
+              {% else %}<span class="text-dim text-xs">—</span>{% endif %}
+            </td>
+
+            <!-- WA -->
+            <td style="text-align:center">
+              {% if d.neg.wa %}<span class="text-ok text-base">✓</span>{% else %}<span class="text-bad/60 text-sm">✕</span>{% endif %}
+            </td>
+
+            <!-- Horários -->
+            <td style="text-align:center">
+              {% if d.ultimo %}
+                {% if d.ultimo.hrs_ok %}<span class="text-ok text-base">✓</span>{% else %}<span class="text-bad/60 text-sm">✕</span>{% endif %}
+              {% else %}<span class="text-dim text-xs">—</span>{% endif %}
+            </td>
+
+            <!-- Data -->
+            <td class="font-mono text-xs text-dim">{{ d.ultimo.data.strftime("%d/%m %H:%M") if d.ultimo else "—" }}</td>
+
+            <!-- Ações -->
+            <td class="no-print">
+              <div class="flex items-center gap-1" onclick="event.stopPropagation()">
+                <button onclick="analisarUm({{ d.neg.id }}, this)" class="btn-ghost p-1.5 rounded-md" title="Reanalisar">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                </button>
+                <button onclick="remover({{ d.neg.id }}, this)" class="btn-danger p-1.5 rounded-md" title="Remover">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="py-20 text-center">
+      <div class="w-12 h-12 rounded-full bg-s2 border border-b1 flex items-center justify-center mx-auto mb-4">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </div>
+      <div class="font-syne font-semibold text-muted mb-1">Nenhum negócio cadastrado</div>
+      <div class="text-xs text-dim">Clique em <button onclick="abrirBusca()" class="text-car hover:underline">+ Adicionar negócio</button> para começar</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ══ MODAL: ADICIONAR NEGÓCIO ══ -->
+<div id="modalBusca" class="modal-backdrop">
+  <div class="modal-box w-full max-w-2xl">
+    <div class="px-6 py-5 border-b border-b1 flex items-center justify-between">
+      <div>
+        <h2 class="font-syne font-bold text-base">Adicionar negócio</h2>
+        <p class="text-xs text-muted mt-0.5">Busque no Google Maps ou adicione manualmente</p>
+      </div>
+      <button onclick="fecharBusca()" class="btn-ghost w-8 h-8 rounded-lg flex items-center justify-center">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="p-6">
+      <!-- Search -->
+      <div class="flex gap-2 mb-1">
+        <input id="buscaNome" type="text" placeholder="Nome do negócio (ex: Café Central)" class="flex-1 py-2.5 px-3"
+               onkeydown="if(event.key==='Enter') buscarGMaps()"/>
+        <input id="buscaCidade" type="text" placeholder="Cidade" value="Brasília" class="w-32 py-2.5 px-3"/>
+        <button onclick="buscarGMaps()" class="btn-primary px-4 py-2.5 rounded-lg text-xs">Buscar</button>
+      </div>
+      <div id="buscaStatus" class="text-xs text-muted mb-4 h-4"></div>
+      <div id="buscaResultados" class="space-y-2 mb-6"></div>
+
+      <!-- Divider -->
+      <div class="flex items-center gap-3 mb-5">
+        <div class="flex-1 h-px bg-b1"></div>
+        <span class="text-xs text-dim">ou adicionar manualmente</span>
+        <div class="flex-1 h-px bg-b1"></div>
+      </div>
+
+      <!-- Manual -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-muted mb-1.5">Nome *</label>
+          <input id="mNome" type="text" placeholder="Nome do negócio" class="w-full py-2 px-3"/>
+        </div>
+        <div>
+          <label class="block text-xs text-muted mb-1.5">Categoria</label>
+          <input id="mCat" type="text" placeholder="Ex: Cafeteria, Clínica, Restaurante" class="w-full py-2 px-3"/>
+        </div>
+        <div>
+          <label class="block text-xs text-muted mb-1.5">Cidade</label>
+          <input id="mCidade" type="text" value="Brasília" class="w-full py-2 px-3"/>
+        </div>
+        <div>
+          <label class="block text-xs text-muted mb-1.5">WhatsApp</label>
+          <input id="mWA" type="text" placeholder="(61) 99999-9999" class="w-full py-2 px-3"/>
+        </div>
+      </div>
+      <button onclick="adicionarManual()" class="btn-primary mt-4 px-5 py-2.5 rounded-lg text-xs">Adicionar manualmente</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: IMPORTAR CSV ══ -->
+<div id="modalCSV" class="modal-backdrop">
+  <div class="modal-box w-full max-w-md">
+    <div class="px-6 py-5 border-b border-b1 flex items-center justify-between">
+      <div>
+        <h2 class="font-syne font-bold text-base">Importar CSV</h2>
+        <p class="text-xs text-muted mt-0.5">Compatível com as listas de prospecção</p>
+      </div>
+      <button onclick="fecharCSV()" class="btn-ghost w-8 h-8 rounded-lg flex items-center justify-center">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="p-6">
+      <div class="bg-s2 rounded-xl p-4 mb-4 border border-b1">
+        <div class="text-xs text-muted font-mono leading-relaxed">
+          <span class="text-car">nome</span>, <span class="text-car">categoria</span>, <span class="text-car">cidade</span>, <span class="text-car">whatsapp</span><br/>
+          <span class="text-dim">Ernesto Cafés, Cafeteria, Brasília, 61994531302</span><br/>
+          <span class="text-dim">Clínica X, Clínica, São Paulo,</span>
+        </div>
+      </div>
+      <p class="text-xs text-muted mb-1">Também aceita o formato das listas de prospecção com as colunas <span class="text-text/60">Nome, Endereço, Whatsapp, URL Google Maps, Nota, Avaliações.</span></p>
+      <a href="/template-csv" class="text-xs text-car hover:underline block mb-4">↓ Baixar template CSV</a>
+      <div class="border-2 border-dashed border-b2 rounded-xl p-6 text-center mb-4 hover:border-car/30 transition-colors cursor-pointer" onclick="document.getElementById('csvFile').click()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.5" class="mx-auto mb-2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <div class="text-xs text-muted" id="csvFileName">Clique para selecionar o arquivo CSV</div>
+      </div>
+      <input type="file" id="csvFile" accept=".csv" class="hidden" onchange="document.getElementById('csvFileName').textContent = this.files[0]?.name || 'Arquivo selecionado'"/>
+      <button onclick="importarCSV()" class="btn-primary w-full py-2.5 rounded-lg text-xs">Importar</button>
+      <div id="csvStatus" class="mt-3 text-xs text-center"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Filtro
+function filtrar(v) {
+  document.querySelectorAll('.neg-row').forEach(r => {
+    r.style.display = r.dataset.nome.includes(v.toLowerCase()) ? '' : 'none';
+  });
+}
+
+// Analisar todas
+function analisarTodas() {
+  const btn = document.getElementById('btnAnalisar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="animate-spin inline-block mr-1.5">↻</span> Analisando…';
+  document.getElementById('progressBlock').classList.remove('hidden');
+  fetch('/analisar', {method:'POST'}).then(r=>r.json()).then(d => {
+    if (!d.ok) { alert(d.msg); return; }
+    pollJob();
+  });
+}
+
+// Analisar um
+function analisarUm(id, btn) {
+  btn.innerHTML = '<svg class="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>';
+  btn.disabled = true;
+  fetch(`/analisar/${id}`, {method:'POST'}).then(r=>r.json()).then(d => {
+    if (d.ok) location.reload();
+    else { btn.innerHTML='✕'; btn.disabled = false; }
+  });
+}
+
+// Remover
+function remover(id, btn) {
+  if (!confirm('Remover este negócio da lista?')) return;
+  fetch(`/negocio/${id}/remover`, {method:'POST'}).then(r=>r.json()).then(d => {
+    if (d.ok) btn.closest('tr').style.opacity = '0', setTimeout(() => btn.closest('tr').remove(), 300);
+  });
+}
+
+// Poll
+function pollJob() {
+  fetch('/job-status').then(r=>r.json()).then(d => {
+    document.getElementById('progFill').style.width = d.pct + '%';
+    document.getElementById('progDone').textContent = d.feitos;
+    document.getElementById('progLabel').textContent = d.atual;
+    if (d.rodando) { setTimeout(pollJob, 1200); }
+    else {
+      document.getElementById('progLabel').textContent = `✓ Concluído — ${d.erros} erros`;
+      setTimeout(() => location.reload(), 2000);
+    }
+  });
+}
+
+{% if job and job.rodando %}
+document.getElementById('progressBlock').classList.remove('hidden');
+document.getElementById('btnAnalisar').disabled = true;
+document.getElementById('btnAnalisar').innerHTML = '<span class="animate-spin inline-block mr-1.5">↻</span> Analisando…';
+pollJob();
+{% endif %}
+
+// Modais
+function abrirBusca() { document.getElementById('modalBusca').classList.add('open'); document.getElementById('buscaNome').focus(); }
+function fecharBusca() { document.getElementById('modalBusca').classList.remove('open'); document.getElementById('buscaResultados').innerHTML=''; document.getElementById('buscaStatus').textContent=''; }
+function abrirCSV()   { document.getElementById('modalCSV').classList.add('open'); }
+function fecharCSV()  { document.getElementById('modalCSV').classList.remove('open'); }
+
+// Fechar modais ao clicar fora
+document.getElementById('modalBusca').addEventListener('click', function(e){ if(e.target===this) fecharBusca(); });
+document.getElementById('modalCSV').addEventListener('click',   function(e){ if(e.target===this) fecharCSV(); });
+
+// Buscar no Google Maps
+async function buscarGMaps() {
+  const q      = document.getElementById('buscaNome').value.trim();
+  const cidade = document.getElementById('buscaCidade').value.trim();
+  if (!q) return;
+  const status = document.getElementById('buscaStatus');
+  const div    = document.getElementById('buscaResultados');
+  status.textContent = 'Buscando no Google Maps…';
+  div.innerHTML = '';
+  try {
+    const res  = await fetch(`/api/buscar?q=${encodeURIComponent(q)}&cidade=${encodeURIComponent(cidade)}`);
+    const data = await res.json();
+    status.textContent = '';
+    if (data.error) { status.textContent = '✕ ' + data.error; return; }
+    if (!data.length) { status.textContent = 'Nenhum resultado encontrado.'; return; }
+    div.innerHTML = data.map(r => `
+      <div class="flex items-center gap-3 p-3 rounded-xl bg-s2 border border-b1 hover:border-b2 transition-colors">
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-text truncate">${r.titulo}</div>
+          <div class="text-xs text-muted truncate mt-0.5">${r.endereco}</div>
+          <div class="flex items-center gap-3 mt-1">
+            ${r.tipo ? `<span class="text-xs text-dim">${r.tipo}</span>` : ''}
+            ${r.nota ? `<span class="text-xs text-warn">${r.nota}★</span>` : ''}
+            ${r.reviews ? `<span class="text-xs text-dim">${Number(r.reviews).toLocaleString('pt-BR')} avaliações</span>` : ''}
+          </div>
+        </div>
+        <button onclick="adicionarDoMaps(this,'${r.cid}','${esc(r.titulo)}','${esc(cidade)}','${esc(r.tipo||'Geral')}',${r.nota||0},${r.reviews||0})"
+          class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Adicionar</button>
+      </div>`).join('');
+  } catch(e) { status.textContent = '✕ Erro: ' + e.message; }
+}
+
+function esc(s){ return (s||'').replace(/'/g,"\\'"); }
+
+async function adicionarDoMaps(btn, cid, nome, cidade, cat, nota, reviews) {
+  btn.textContent = '…'; btn.disabled = true;
+  const r = await fetch('/negocio/adicionar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nome, categoria:cat, cidade, cid, nota, reviews, wa:''})
+  });
+  const d = await r.json();
+  if (d.ok) { btn.textContent='✓ Adicionado'; btn.className='text-xs text-ok px-3 py-1.5'; }
+}
+
+async function adicionarManual() {
+  const nome   = document.getElementById('mNome').value.trim();
+  const cat    = document.getElementById('mCat').value.trim() || 'Geral';
+  const cidade = document.getElementById('mCidade').value.trim() || 'Brasília';
+  const wa     = document.getElementById('mWA').value.trim();
+  if (!nome) { alert('Nome obrigatório'); return; }
+  const r = await fetch('/negocio/adicionar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nome, categoria:cat, cidade, wa, cid:''})
+  });
+  const d = await r.json();
+  if (d.ok) { fecharBusca(); location.reload(); }
+}
+
+async function importarCSV() {
+  const f = document.getElementById('csvFile').files[0];
+  if (!f) { alert('Selecione um arquivo CSV'); return; }
+  const status = document.getElementById('csvStatus');
+  status.textContent = 'Importando…'; status.className = 'mt-3 text-xs text-center text-muted';
+  const form = new FormData(); form.append('arquivo', f);
+  const r = await fetch('/importar-csv', {method:'POST', body:form});
+  const d = await r.json();
+  if (d.ok) {
+    status.textContent = `✓ ${d.adicionados} negócios importados com sucesso!`;
+    status.className = 'mt-3 text-xs text-center text-ok';
+    setTimeout(() => { fecharCSV(); location.reload(); }, 1500);
+  } else {
+    status.textContent = '✕ Erro: ' + d.msg;
+    status.className = 'mt-3 text-xs text-center text-bad';
+  }
+}
+</script>
+{% endblock %}
