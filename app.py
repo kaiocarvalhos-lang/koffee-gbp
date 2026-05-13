@@ -9,7 +9,7 @@ import requests
 # ══════════════════════════════════════
 #  APP & DB
 # ══════════════════════════════════════
-app = Flask(__name__, template_folder='.')
+app = Flask(__name__, template_folder='templates')
 app.secret_key = os.environ.get("SECRET_KEY", "gbp-analyzer-secret-2025")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(BASE_DIR, "gbp_analyzer.db")
@@ -325,24 +325,50 @@ def remover_negocio(neg_id):
 @app.route("/importar-csv", methods=["POST"])
 @login_required
 def importar_csv():
+    import re as _re
     f = request.files.get("arquivo")
     if not f:
         return jsonify({"ok": False, "msg": "Nenhum arquivo enviado"})
     try:
-        stream  = io.StringIO(f.stream.read().decode("utf-8-sig"), newline=None)
-        reader  = csv.DictReader(stream)
+        stream = io.StringIO(f.stream.read().decode("utf-8-sig"), newline=None)
+        reader = csv.DictReader(stream)
+        # normaliza nomes das colunas (remove espaços extras)
+        reader.fieldnames = [c.strip() for c in (reader.fieldnames or [])]
+
+        def _cidade(end):
+            # extrai cidade do endereço: "..., Cidade - UF, CEP, Brasil"
+            m = _re.search(r',\s*([^,\-]+?)\s*-\s*[A-Z]{2},', str(end or ''))
+            return m.group(1).strip() if m else 'Brasil'
+
+        def _cid(url):
+            m = _re.search(r'cid=(\d+)', str(url or ''))
+            return m.group(1) if m else ''
+
+        def _wa(val):
+            v = str(val or '')
+            if v in ('nan', 'NÃO ENCONTRADO', '#ERROR!', ''): return ''
+            return _re.sub(r'\D', '', v)
+
+        def _nota(val):
+            try: return float(str(val).replace(',', '.'))
+            except: return 0.0
+
+        def _avs(val):
+            try: return int(val)
+            except: return 0
+
         adicionados = 0
-        erros = []
         for row in reader:
-            nome = (row.get("nome") or row.get("Nome") or "").strip()
-            if not nome:
-                continue
+            nome = (row.get('Nome') or row.get('nome') or '').strip()
+            if not nome: continue
             neg = Negocio(
                 nome      = nome,
-                categoria = (row.get("categoria") or row.get("Categoria") or "Geral").strip(),
-                cidade    = (row.get("cidade") or row.get("Cidade") or "Brasília").strip(),
-                wa        = (row.get("whatsapp") or row.get("WhatsApp") or row.get("wa") or "").strip(),
-                cid       = (row.get("cid") or row.get("CID") or "").strip(),
+                categoria = (row.get('Categoria') or row.get('categoria') or 'Geral').strip(),
+                cidade    = _cidade(row.get('Endereço') or row.get('Endereco') or row.get('cidade') or ''),
+                wa        = _wa(row.get('Whatsapp') or row.get('whatsapp') or row.get('wa') or ''),
+                cid       = _cid(row.get('URL Google Maps') or row.get('cid') or ''),
+                r_base    = _nota(row.get('Nota') or row.get('nota') or 0),
+                a_base    = _avs(row.get('Avaliações') or row.get('Avaliacoes') or 0),
             )
             db.session.add(neg)
             adicionados += 1
