@@ -9,7 +9,7 @@ import requests
 # ══════════════════════════════════════
 #  APP & DB
 # ══════════════════════════════════════
-app = Flask(__name__, template_folder='templates')
+app = Flask(__name__, template_folder='.')
 app.secret_key = os.environ.get("SECRET_KEY", "gbp-analyzer-secret-2025")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(BASE_DIR, "gbp_analyzer.db")
