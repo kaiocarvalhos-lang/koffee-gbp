@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{% block title %}Koffee GBP{% endblock %}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      esp:'#0a0a0a', s1:'#111111', s2:'#181818',
+      b1:'#1e1e1e', b2:'#2a2a2a',
+      car:'#c8893c', gold:'#e8b96a',
+      ok:'#00e676', warn:'#ffab00', bad:'#ff5252'
+    },
+    fontFamily: { syne:['Syne','sans-serif'], dm:['DM Sans','sans-serif'], mono:['DM Mono','monospace'] }
+  }}
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  body { background:#0a0a0a; color:#e8e8e8; font-family:'DM Sans',sans-serif; }
+  ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#2a2a2a; border-radius:2px; }
+  .score-ok   { background:rgba(0,230,118,.12); color:#00e676; }
+  .score-warn { background:rgba(255,171,0,.12);  color:#ffab00; }
+  .score-bad  { background:rgba(255,82,82,.12);  color:#ff5252; }
+  .score-idle { background:#1a1a1a; color:#444; }
+  .top-bar { background:rgba(200,137,60,.06); border-bottom:1px solid #1e1e1e; }
+  .card { background:#111; border:1px solid #1e1e1e; border-radius:8px; }
+  .btn-car { background:#c8893c; color:#000; font-weight:600; border:none; cursor:pointer; transition:filter .2s; }
+  .btn-car:hover { filter:brightness(1.15); }
+  .btn-out { background:transparent; border:1px solid #2a2a2a; color:#666; cursor:pointer; transition:all .2s; }
+  .btn-out:hover { border-color:#c8893c; color:#c8893c; }
+  input, select { background:#0d0d0d; border:1px solid #1e1e1e; border-radius:6px; color:#e8e8e8; padding:8px 12px; width:100%; outline:none; transition:border-color .2s; font-family:'DM Sans',sans-serif; }
+  input:focus, select:focus { border-color:#c8893c; }
+  .chk-ok  { background:rgba(0,230,118,.1);  color:#00e676; border:1px solid rgba(0,230,118,.2);  }
+  .chk-no  { background:rgba(255,82,82,.1);  color:#ff5252; border:1px solid rgba(255,82,82,.2);  }
+  .chk-ver { background:rgba(255,171,0,.1);  color:#ffab00; border:1px solid rgba(255,171,0,.2);  }
+  .progress-bar { height:5px; background:#1e1e1e; border-radius:3px; overflow:hidden; }
+  .progress-fill { height:100%; background:linear-gradient(90deg,#c8893c,#e8b96a); border-radius:3px; transition:width .4s; }
+  @media print { nav, .no-print { display:none!important; } }
+</style>
+</head>
+<body>
+
+{% if session.user_id %}
+<nav class="top-bar sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-6">
+    <span class="font-syne font-extrabold text-car text-sm tracking-wide">Koffee <span class="text-b2">Marketing</span></span>
+    <div class="hidden md:flex gap-1">
+      <a href="{{ url_for('dashboard') }}" class="px-3 py-1 rounded text-xs font-medium {% if request.endpoint == 'dashboard' %}text-car bg-b1{% else %}text-gray-500 hover:text-car{% endif %}">Dashboard</a>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    <span class="text-xs text-gray-600 hidden md:block">{{ session.user_nome }}</span>
+    <a href="{{ url_for('logout') }}" class="text-xs text-gray-600 hover:text-bad px-2 py-1 rounded border border-b1 hover:border-bad transition-all">Sair</a>
+  </div>
+</nav>
+{% endif %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="fixed top-16 right-4 z-50 space-y-2">
+  {% for cat, msg in messages %}
+  <div class="card px-4 py-3 text-sm {% if cat == 'error' %}border-bad/30 text-bad{% else %}border-ok/30 text-ok{% endif %}">{{ msg }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+
+<main>{% block content %}{% endblock %}</main>
+
+</body>
+</html>

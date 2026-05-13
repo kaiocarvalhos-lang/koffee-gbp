@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}{{ neg.nome }} — GBP Analyzer{% endblock %}
+{% block content %}
+<div class="max-w-screen-xl mx-auto px-6 py-6">
+
+  <div class="flex items-center gap-2 text-xs text-gray-600 mb-5 no-print">
+    <a href="{{ url_for('dashboard') }}" class="hover:text-car">Dashboard</a>
+    <span>›</span>
+    <a href="{{ url_for('dashboard', cat=neg.categoria) }}" class="hover:text-car">{{ neg.categoria }}</a>
+    <span>›</span>
+    <span class="text-gray-400">{{ neg.nome }}</span>
+  </div>
+
+  <!-- HEADER -->
+  <div class="card p-6 mb-5">
+    <div class="flex justify-between items-start gap-6 flex-wrap">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="inline-block text-xs font-bold tracking-widest uppercase text-bad border border-bad/30 bg-bad/8 px-2 py-0.5 rounded">🔴 Google Meu Negócio</span>
+          <span class="text-xs px-2 py-0.5 rounded bg-b1 text-gray-500 border border-b2">{{ neg.categoria }}</span>
+        </div>
+        <h1 class="font-syne font-extrabold text-2xl md:text-3xl uppercase mb-2 truncate">{{ (ultimo.titulo_gmb or neg.nome)|upper }}</h1>
+        <div class="flex flex-wrap gap-3 text-xs text-gray-600">
+          <span>▶ {{ neg.cidade }}</span>
+          {% if ultimo and ultimo.telefone %}<span>▶ {{ ultimo.telefone }}</span>{% endif %}
+          {% if ultimo and ultimo.open_state %}<span class="text-ok">▶ {{ ultimo.open_state }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        {% if ultimo %}
+        <div class="font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}</div>
+        <div class="text-xs font-bold tracking-widest uppercase score-lbl-{{ score_class(ultimo.score) }} mt-1">▲ {{ 'BOM' if ultimo.score >= 75 else 'REGULAR' if ultimo.score >= 50 else 'CRÍTICO' }} — Score GMB</div>
+        {% else %}
+        <div class="text-gray-700 text-sm">Sem dados</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if issues %}
+    <div class="mt-4 border-l-4 border-car bg-car/5 px-4 py-3 rounded-r-lg text-sm text-gray-400">
+      {% set crits = issues|selectattr('crit')|list %}
+      {% if crits|length >= 2 %}<strong class="text-car">Múltiplos problemas críticos:</strong> {{ crits[0].t|lower }} e {{ crits[1].t|lower }} — alta oportunidade de prospecção.
+      {% elif crits %}<strong class="text-car">Ponto crítico:</strong> {{ crits[0].t|lower }}. Ação imediata pode gerar resultado rápido.
+      {% else %}<strong class="text-car">Perfil em boa forma.</strong> Foco em crescimento de avaliações.{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="flex gap-2 mt-4 no-print flex-wrap">
+      <button onclick="analisarAgora()" class="btn-car px-4 py-2 rounded-lg text-xs tracking-wider uppercase">↺ Reanalisar agora</button>
+      <button onclick="abrirEditar()" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">✏ Editar</button>
+      <button onclick="window.print()" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">🖨 Imprimir</button>
+      <a href="{{ url_for('dashboard') }}" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">← Voltar</a>
+    </div>
+  </div>
+
+  {% if ultimo %}
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+    <!-- Gauge -->
+    <div class="card p-5 flex flex-col items-center justify-center">
+      <canvas id="gaugeChart" width="160" height="100"></canvas>
+      <div class="text-xs text-gray-600 uppercase tracking-widest mt-2">Score de Saúde</div>
+    </div>
+
+    <!-- Avaliação -->
+    <div class="card p-5">
+      <div class="flex items-end gap-3 mb-4">
+        <div class="font-syne font-extrabold text-4xl text-warn">{{ ultimo.nota }}★</div>
+        <div>
+          <div class="text-warn text-lg">{{ '★' * (ultimo.nota|round|int) }}{{ '☆' * (5 - ultimo.nota|round|int) }}</div>
+          <div class="text-xs text-gray-600">{{ "{:,}".format(ultimo.avaliacoes) }} avaliações</div>
+        </div>
+      </div>
+      {% set n = ultimo.nota %}
+      {% set s5 = [[((n-3)*78)|round|int, 0]|max, 100]|min %}
+      {% set s1 = [[((5-n)*18)|round|int, 0]|max, 100]|min %}
+      {% set s2 = [[((5-n)*11)|round|int, 0]|max, 100]|min %}
+      {% set s3 = [[((5-n)*7)|round|int,  0]|max, 100]|min %}
+      {% set s4 = [[100-s5-s3-s2-s1, 0]|max, 100]|min %}
+      {% for star, pct in [('5',s5),('4',s4),('3',s3),('2',s2),('1',s1)] %}
+      <div class="flex items-center gap-2 mb-1">
+        <span class="font-mono text-xs text-gray-600 w-4 text-right">{{ star }}★</span>
+        <div class="flex-1 h-1.5 bg-b1 rounded overflow-hidden"><div class="h-full bg-warn rounded" style="width:{{ pct }}%"></div></div>
+        <span class="font-mono text-xs text-gray-700 w-8 text-right">{{ (ultimo.avaliacoes * pct / 100)|int }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Checklist -->
+    <div class="card p-5">
+      <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">Status do Perfil</div>
+      {% macro chk(ok, lbl) %}
+      <div class="flex items-center justify-between py-1.5 border-b border-b1/50 last:border-0">
+        <span class="text-sm">{{ lbl }}</span>
+        <span class="chk-{{ 'ok' if ok else 'no' }} text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase">{{ 'SIM' if ok else 'NÃO' }}</span>
+      </div>
+      {% endmacro %}
+      {{ chk(ultimo.foto_ok,  'Foto no perfil') }}
+      <div class="flex items-center justify-between py-1.5 border-b border-b1/50">
+        <span class="text-sm">Responde reviews</span>
+        <span class="chk-ver text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase">Verificar</span>
+      </div>
+      {{ chk(ultimo.hrs_ok,   'Horário atualizado') }}
+      <div class="flex items-center justify-between py-1.5 border-b border-b1/50">
+        <span class="text-sm">Posts no GMB</span>
+        <span class="chk-ver text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase">Verificar</span>
+      </div>
+      {{ chk(ultimo.desc_ok,  'Descrição') }}
+      {{ chk(ultimo.site_ok,  'Link do site') }}
+      {{ chk(ultimo.preco,    'Preço cadastrado') }}
+      {{ chk(ultimo.wa_ok,    'WhatsApp') }}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+    <!-- Evolução -->
+    <div class="card p-5">
+      <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-4">Evolução do Score</div>
+      {% if diags|length > 1 %}
+      <canvas id="evolChart" height="160"></canvas>
+      {% else %}
+      <div class="text-sm text-gray-600 italic py-8 text-center">Execute mais análises para ver a evolução ao longo do tempo.</div>
+      {% endif %}
+    </div>
+
+    <!-- Info + Problemas -->
+    <div class="card p-5">
+      <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">Informações do Perfil</div>
+      {% if ultimo.website %}<div class="mb-3"><div class="text-xs text-gray-600 uppercase tracking-wider mb-1">Site</div><div class="text-sm text-gray-400 break-all">{{ ultimo.website|replace('https://','') }}</div></div>{% endif %}
+      {% if ultimo.descricao %}<div class="mb-3"><div class="text-xs text-gray-600 uppercase tracking-wider mb-1">Descrição</div><div class="text-xs text-gray-500 leading-relaxed">{{ ultimo.descricao[:150] }}…</div></div>{% endif %}
+      {% if issues %}
+      <div class="mt-4">
+        <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-2">Problemas Identificados</div>
+        {% for iss in issues %}
+        <div class="flex gap-3 items-start bg-esp p-3 rounded-lg border border-b1 mb-2 last:mb-0">
+          <span class="text-sm mt-0.5">{{ '⚠' if iss.crit else '!' }}</span>
+          <div>
+            <div class="text-xs font-semibold {{ 'text-bad' if iss.crit else 'text-warn' }}">{{ iss.t }}</div>
+            <div class="text-xs text-gray-600 mt-0.5 leading-relaxed">{{ iss.d }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if diags|length > 1 %}
+  <div class="card overflow-hidden mb-5">
+    <div class="px-5 py-4 border-b border-b1"><span class="text-xs font-semibold uppercase tracking-widest text-gray-600">Histórico de Análises</span></div>
+    <table class="w-full text-xs">
+      <thead><tr class="border-b border-b1">
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Data</th>
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Score</th>
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Nota</th>
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Avaliações</th>
+        <th class="px-4 py-3 text-center text-gray-600 uppercase tracking-wider">Site</th>
+        <th class="px-4 py-3 text-center text-gray-600 uppercase tracking-wider">Horários</th>
+        <th class="px-4 py-3 text-center text-gray-600 uppercase tracking-wider">Descrição</th>
+      </tr></thead>
+      <tbody>
+        {% for d in diags[:10] %}
+        <tr class="border-b border-b1/50 hover:bg-b1/30">
+          <td class="px-4 py-3 font-mono text-gray-500">{{ d.data.strftime("%d/%m/%Y %H:%M") }}</td>
+          <td class="px-4 py-3"><span class="score-{{ score_class(d.score) }} px-2 py-0.5 rounded font-bold font-mono">{{ d.score }}</span></td>
+          <td class="px-4 py-3 text-warn">{{ d.nota }}⭐</td>
+          <td class="px-4 py-3 font-mono text-gray-500">{{ "{:,}".format(d.avaliacoes) }}</td>
+          <td class="px-4 py-3 text-center">{% if d.site_ok %}<span class="text-ok">✓</span>{% else %}<span class="text-bad">✗</span>{% endif %}</td>
+          <td class="px-4 py-3 text-center">{% if d.hrs_ok %}<span class="text-ok">✓</span>{% else %}<span class="text-bad">✗</span>{% endif %}</td>
+          <td class="px-4 py-3 text-center">{% if d.desc_ok %}<span class="text-ok">✓</span>{% else %}<span class="text-bad">✗</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="card p-10 text-center text-gray-600">
+    <div class="text-3xl mb-3 opacity-30">☕</div>
+    <div class="font-syne text-sm">Nenhum diagnóstico ainda</div>
+    <div class="text-xs mt-2">Clique em "Reanalisar agora" para buscar os dados.</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- MODAL EDITAR -->
+<div id="modalEditar" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
+  <div class="card w-full max-w-md">
+    <div class="p-5 border-b border-b1 flex justify-between items-center">
+      <h2 class="font-syne font-bold text-sm">Editar negócio</h2>
+      <button onclick="fecharEditar()" class="text-gray-600 hover:text-bad">✕</button>
+    </div>
+    <form action="{{ url_for('editar_negocio', neg_id=neg.id) }}" method="POST" class="p-5 space-y-3">
+      <div><label class="block text-xs text-gray-600 mb-1">Nome</label><input type="text" name="nome" value="{{ neg.nome }}"/></div>
+      <div><label class="block text-xs text-gray-600 mb-1">Categoria</label><input type="text" name="categoria" value="{{ neg.categoria }}"/></div>
+      <div><label class="block text-xs text-gray-600 mb-1">Cidade</label><input type="text" name="cidade" value="{{ neg.cidade }}"/></div>
+      <div><label class="block text-xs text-gray-600 mb-1">WhatsApp</label><input type="text" name="wa" value="{{ neg.wa }}"/></div>
+      <button type="submit" class="btn-car w-full py-2 rounded-lg text-xs uppercase tracking-wider">Salvar</button>
+    </form>
+  </div>
+</div>
+
+<style>
+  .score-num-ok{color:#00e676}.score-num-warn{color:#ffab00}.score-num-bad{color:#ff5252}.score-num-idle{color:#444}
+  .score-lbl-ok{color:#00e676}.score-lbl-warn{color:#ffab00}.score-lbl-bad{color:#ff5252}
+</style>
+
+<script>
+const SCORE   = {{ ultimo.score if ultimo else 0 }};
+const LABELS  = {{ chart_labels|safe }};
+const SCORES  = {{ chart_scores|safe }};
+const NOTAS   = {{ chart_notas|safe }};
+const NEG_ID  = {{ neg.id }};
+
+(function(){
+  const c = document.getElementById('gaugeChart'); if(!c) return;
+  const ctx = c.getContext('2d');
+  const cx=80,cy=80,r=60;
+  const color = SCORE>=75?'#00e676':SCORE>=50?'#ffab00':'#ff5252';
+  ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,2*Math.PI);ctx.strokeStyle='#1e1e1e';ctx.lineWidth=10;ctx.lineCap='round';ctx.stroke();
+  if(SCORE>0){const end=Math.PI+(SCORE/100)*Math.PI;ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,end);ctx.strokeStyle=color;ctx.lineWidth=10;ctx.lineCap='round';ctx.stroke();}
+  ctx.fillStyle=color;ctx.font='bold 22px Syne,sans-serif';ctx.textAlign='center';ctx.fillText(SCORE,cx,cy+8);
+  ctx.fillStyle='#666';ctx.font='600 9px sans-serif';ctx.fillText(SCORE>=75?'BOM':SCORE>=50?'REGULAR':'CRÍTICO',cx,cy+26);
+})();
+
+const ev = document.getElementById('evolChart');
+if(ev && LABELS.length>1){
+  new Chart(ev,{type:'line',data:{labels:LABELS,datasets:[
+    {label:'Score GMB',data:SCORES,borderColor:SCORE>=75?'#00e676':SCORE>=50?'#ffab00':'#ff5252',backgroundColor:SCORE>=75?'rgba(0,230,118,.08)':SCORE>=50?'rgba(255,171,0,.08)':'rgba(255,82,82,.08)',tension:.4,fill:true,pointRadius:4},
+    {label:'Nota Google',data:NOTAS,borderColor:'#e8b96a',backgroundColor:'transparent',tension:.4,pointRadius:3,yAxisID:'y2',borderDash:[4,4]}
+  ]},options:{responsive:true,plugins:{legend:{labels:{color:'#666',font:{size:11}}}},scales:{x:{ticks:{color:'#444'},grid:{color:'#1a1a1a'}},y:{ticks:{color:'#666'},grid:{color:'#1a1a1a'},min:0,max:100},y2:{ticks:{color:'#e8b96a'},grid:{display:false},position:'right',min:3.5,max:5.1}}}});
+}
+
+function analisarAgora(){
+  const btn=event.target; btn.textContent='⏳ Buscando…'; btn.disabled=true;
+  fetch(`/analisar/${NEG_ID}`,{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok) location.reload(); else{btn.textContent='✗ Erro';btn.disabled=false;alert(d.msg);}
+  });
+}
+function abrirEditar(){ document.getElementById('modalEditar').classList.replace('hidden','flex'); }
+function fecharEditar(){ document.getElementById('modalEditar').classList.replace('flex','hidden'); }
+</script>
+{% endblock %}
