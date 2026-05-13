@@ -297,19 +297,16 @@ def adicionar_negocio():
     db.session.commit()
     return jsonify({"ok": True, "id": neg.id, "nome": neg.nome})
 
-@app.route("/negocio/<int:neg_id>/editar", methods=["GET", "POST"])
+@app.route("/negocio/<int:neg_id>/editar", methods=["POST"])
 @login_required
 def editar_negocio(neg_id):
     neg = Negocio.query.get_or_404(neg_id)
-    if request.method == "POST":
-        neg.nome      = request.form.get("nome", neg.nome).strip()
-        neg.categoria = request.form.get("categoria", neg.categoria).strip()
-        neg.cidade    = request.form.get("cidade", neg.cidade).strip()
-        neg.wa        = request.form.get("wa", neg.wa).strip()
-        db.session.commit()
-        flash("Negócio atualizado.", "ok")
-        return redirect(url_for("negocio", neg_id=neg_id))
-    return render_template("editar.html", neg=neg)
+    neg.nome      = request.form.get("nome", neg.nome).strip()
+    neg.categoria = request.form.get("categoria", neg.categoria).strip()
+    neg.cidade    = request.form.get("cidade", neg.cidade).strip()
+    neg.wa        = request.form.get("wa", neg.wa).strip()
+    db.session.commit()
+    return redirect(url_for("negocio", neg_id=neg_id))
 
 @app.route("/negocio/<int:neg_id>/remover", methods=["POST"])
 @login_required
