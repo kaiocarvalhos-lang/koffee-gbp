@@ -9,7 +9,7 @@ import requests
 # ══════════════════════════════════════
 #  APP & DB
 # ══════════════════════════════════════
-app = Flaskapp = Flask(__name__, template_folder='.')
+app = Flask(__name__, template_folder='.')
 app.secret_key = os.environ.get("SECRET_KEY", "koffee-gbp-secret-2025-mude-isso")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(BASE_DIR, "koffee_gbp.db")
