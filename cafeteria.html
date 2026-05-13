@@ -211,9 +211,9 @@
 
 <script>
 const SCORE    = {{ ultimo.score if ultimo else 0 }};
-const LABELS   = {{ chart_labels }};
-const SCORES   = {{ chart_scores }};
-const NOTAS    = {{ chart_notas }};
+const LABELS   = {{ chart_labels|safe }};
+const SCORES   = {{ chart_scores|safe }};
+const NOTAS    = {{ chart_notas|safe }};
 const CAFE_ID  = {{ cafe.id }};
 
 // ── Gauge (semicírculo)
