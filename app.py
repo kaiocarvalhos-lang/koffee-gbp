@@ -421,6 +421,9 @@ def init_db():
     if not JobStatus.query.first():
         db.session.add(JobStatus())
         db.session.commit()
+# Inicializa o banco ao importar (necessário para Gunicorn)
+with app.app_context():
+    init_db()
 
 if __name__ == "__main__":
     with app.app_context():
