@@ -9,7 +9,7 @@ import requests
 # ══════════════════════════════════════
 #  APP & DB
 # ══════════════════════════════════════
-app = Flask(__name__, template_folder='templates')
+app = Flask(__name__, template_folder='.')
 app.secret_key = os.environ.get("SECRET_KEY", "gbp-analyzer-secret-2025")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(BASE_DIR, "gbp_analyzer.db")
@@ -499,8 +499,6 @@ def init_db():
 with app.app_context():
     init_db()
 
-if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
 
 @app.route('/template-csv')
 @login_required
@@ -509,3 +507,6 @@ def template_csv():
     csv_content = "nome,categoria,cidade,whatsapp\nMeu Negocio,Categoria,Brasilia,61999999999\n"
     return Response(csv_content, mimetype='text/csv',
         headers={'Content-Disposition': 'attachment;filename=template_gbp.csv'})
+
+if __name__ == "__main__":
+    app.run(debug=False, host="0.0.0.0", port=5000)
