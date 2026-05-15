@@ -83,6 +83,21 @@ class JobStatus(db.Model):
     finalizado = db.Column(db.DateTime)
     erros      = db.Column(db.Integer, default=0)
 
+class ConcorrenteCache(db.Model):
+    """Concorrentes reais buscados no Google via SerpAPI."""
+    id         = db.Column(db.Integer, primary_key=True)
+    neg_id     = db.Column(db.Integer, db.ForeignKey("negocio.id"), nullable=False)
+    atualizado = db.Column(db.DateTime, default=datetime.utcnow)
+    nome       = db.Column(db.String(200), default="")
+    endereco   = db.Column(db.String(300), default="")
+    nota       = db.Column(db.Float, default=0.0)
+    avaliacoes = db.Column(db.Integer, default=0)
+    score      = db.Column(db.Integer, default=0)
+    is_self    = db.Column(db.Boolean, default=False)
+    pos        = db.Column(db.Integer, default=0)
+    gap        = db.Column(db.Integer, default=0)
+
+
 # ══════════════════════════════════════
 #  SERP API
 # ══════════════════════════════════════
@@ -444,6 +459,19 @@ def job_status():
         "finalizado": job.finalizado.strftime("%d/%m %H:%M") if job.finalizado else None,
     })
 
+@app.route("/negocio/<int:neg_id>/concorrentes", methods=["POST"])
+@login_required
+def buscar_concorrentes_route(neg_id):
+    """Busca concorrentes reais do Google e salva no cache."""
+    neg    = Negocio.query.get_or_404(neg_id)
+    ultimo = neg.diagnosticos[0] if neg.diagnosticos else None
+    try:
+        resultado = _buscar_concorrentes_google(neg, ultimo)
+        return jsonify({"ok": True, "total": len(resultado)})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+
 # ══════════════════════════════════════
 #  DETALHE DO NEGÓCIO — helpers
 # ══════════════════════════════════════
@@ -492,28 +520,104 @@ def _get_criterios(neg, d):
     ruins = sum(1 for c in criterios if c["s"] == "bad")
     return criterios, bons, regs, ruins
 
-def _get_concorrentes(neg, ultimo):
-    """Ranking de concorrentes da mesma categoria no banco."""
-    todos = Negocio.query.filter(
-        Negocio.ativo == True,
-        Negocio.categoria == neg.categoria,
-        Negocio.id != neg.id
-    ).order_by(Negocio.nome).all()
+
+def _buscar_concorrentes_google(neg, ultimo):
+    """
+    Busca concorrentes reais no Google Maps via SerpAPI.
+    Salva resultados em ConcorrenteCache.
+    Retorna lista formatada para o template.
+    """
+    query = f"{neg.categoria} {neg.cidade}"
+    data  = _serp({"engine": "google_maps", "type": "search", "q": query})
+    results = data.get("local_results", [])[:7]
+
+    # Apaga cache antigo deste negócio
+    ConcorrenteCache.query.filter_by(neg_id=neg.id).delete()
+
+    # Detecta se o próprio negócio aparece nos resultados
+    self_words = set(w.lower() for w in neg.nome.split() if len(w) >= 3)
+
     lista = []
-    for n in todos:
-        d = n.diagnosticos[0] if n.diagnosticos else None
-        lista.append({"id":n.id,"nome":n.nome,"cidade":n.cidade,
-            "score":d.score if d else None,"nota":d.nota if d else n.r_base,
-            "avs":d.avaliacoes if d else n.a_base,"is_self":False})
-    lista.append({"id":neg.id,"nome":neg.nome,"cidade":neg.cidade,
-        "score":ultimo.score if ultimo else None,"nota":ultimo.nota if ultimo else neg.r_base,
-        "avs":ultimo.avaliacoes if ultimo else neg.a_base,"is_self":True})
-    lista.sort(key=lambda x: (x["score"] is not None, x["score"] or 0), reverse=True)
-    lider = lista[0]["score"] if lista and lista[0]["score"] is not None else None
+    self_found = False
+
+    for r in results:
+        score, site_ok, hrs_ok, desc_ok, foto_ok = calc_score(r, "")
+        nome_google = r.get("title", "")
+        google_words = set(w.lower() for w in nome_google.split() if len(w) >= 3)
+
+        # Identifica se é o próprio negócio (CID ou nome)
+        cid_match  = neg.cid and str(r.get("data_cid", "")) == str(neg.cid)
+        name_match = bool(self_words & google_words)
+        is_self    = cid_match or name_match
+        if is_self:
+            self_found = True
+
+        c = ConcorrenteCache(
+            neg_id     = neg.id,
+            nome       = nome_google,
+            endereco   = r.get("address", ""),
+            nota       = float(r.get("rating") or 0),
+            avaliacoes = int(r.get("reviews") or 0),
+            score      = score,
+            is_self    = is_self,
+        )
+        db.session.add(c)
+        lista.append({"nome": nome_google, "nota": float(r.get("rating") or 0),
+                      "avs": int(r.get("reviews") or 0), "score": score, "is_self": is_self,
+                      "cidade": r.get("address", "").split(",")[0]})
+
+    # Se o próprio negócio não apareceu, adiciona com dados do banco
+    if not self_found and ultimo:
+        c = ConcorrenteCache(
+            neg_id     = neg.id,
+            nome       = neg.nome,
+            endereco   = neg.cidade,
+            nota       = ultimo.nota,
+            avaliacoes = ultimo.avaliacoes,
+            score      = ultimo.score,
+            is_self    = True,
+        )
+        db.session.add(c)
+        lista.append({"nome": neg.nome, "nota": ultimo.nota,
+                      "avs": ultimo.avaliacoes, "score": ultimo.score,
+                      "is_self": True, "cidade": neg.cidade})
+
+    db.session.commit()
+
+    # Ordena e calcula posição / gap
+    lista.sort(key=lambda x: x["score"], reverse=True)
+    lider = lista[0]["score"] if lista else 0
+    for i, item in enumerate(lista):
+        item["id"]  = None
+        item["pos"] = i + 1
+        item["gap"] = item["score"] - lider
+    return lista
+
+def _get_concorrentes(neg, ultimo):
+    """Lê concorrentes do cache (Google). Retorna [] se ainda não foi buscado."""
+    cached = ConcorrenteCache.query.filter_by(neg_id=neg.id)                .order_by(ConcorrenteCache.score.desc()).all()
+    if not cached:
+        return []
+    lista = []
+    for c in cached:
+        lista.append({
+            "id":      None,
+            "nome":    c.nome,
+            "cidade":  c.endereco.split(",")[0] if c.endereco else neg.cidade,
+            "score":   c.score,
+            "nota":    c.nota,
+            "avs":     c.avaliacoes,
+            "is_self": c.is_self,
+            "pos":     c.pos,
+            "gap":     c.gap,
+        })
+    # Recalcula posição / gap (garante consistência mesmo se DB desatualizado)
+    lista.sort(key=lambda x: x["score"], reverse=True)
+    lider = lista[0]["score"] if lista else 0
     for i, item in enumerate(lista):
         item["pos"] = i + 1
-        item["gap"] = (item["score"] - lider) if (item["score"] and lider) else None
-    return lista[:8]
+        item["gap"] = item["score"] - lider
+    return lista
 
 # ══════════════════════════════════════
 #  DETALHE DO NEGÓCIO — rota
