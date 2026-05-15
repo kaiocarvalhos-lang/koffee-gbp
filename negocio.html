@@ -285,11 +285,37 @@
 
 
 {# ── SEÇÃO 2: POSICIONAMENTO VS CONCORRENTES ── #}
-{% if concorrentes and concorrentes|length > 1 %}
+{% if not concorrentes %}
 <div class="card overflow-hidden mb-5">
-  <div class="px-5 py-4 border-b border-b1 flex items-center gap-2">
-    <span class="text-xs font-semibold uppercase tracking-widest text-muted">Posicionamento</span>
-    <span class="text-xs text-dim">— vs concorrentes da mesma categoria</span>
+  <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-semibold uppercase tracking-widest text-muted">Posicionamento</span>
+      <span class="text-xs text-dim">— vs concorrentes reais do Google</span>
+    </div>
+    <button onclick="buscarConcorrentes()" id="btn-concorrentes"
+      class="no-print px-3 py-1.5 rounded-lg text-xs font-medium border border-b2 text-muted hover:text-car hover:border-car/40 transition-all flex items-center gap-1.5">
+      <span id="icon-conc">↺</span> Buscar concorrentes
+    </button>
+  </div>
+  <div class="px-5 py-10 text-center">
+    <div class="text-2xl mb-3 opacity-20">🔍</div>
+    <div class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Sem dados de concorrentes</div>
+    <div class="text-xs text-dim">Clique em <strong class="text-car">"Buscar concorrentes"</strong> para buscar os negócios similares no Google e ver o ranking real.</div>
+  </div>
+</div>
+{% endif %}
+
+{% if concorrentes and concorrentes|length >= 1 %}
+<div class="card overflow-hidden mb-5">
+  <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-semibold uppercase tracking-widest text-muted">Posicionamento</span>
+      <span class="text-xs text-dim">— vs concorrentes reais do Google</span>
+    </div>
+    <button onclick="buscarConcorrentes()" id="btn-concorrentes"
+      class="no-print px-3 py-1.5 rounded-lg text-xs font-medium border border-b2 text-muted hover:text-car hover:border-car/40 transition-all flex items-center gap-1.5">
+      <span id="icon-conc">↺</span> Atualizar do Google
+    </button>
   </div>
 
   {# Gráfico de barras visual #}
@@ -525,6 +551,32 @@ if(ev && LABELS.length>1){
     {label:'Score GMB',data:SCORES,borderColor:SCORE>=75?'#00e676':SCORE>=50?'#ffab00':'#ff5252',backgroundColor:SCORE>=75?'rgba(0,230,118,.08)':SCORE>=50?'rgba(255,171,0,.08)':'rgba(255,82,82,.08)',tension:.4,fill:true,pointRadius:4},
     {label:'Nota Google',data:NOTAS,borderColor:'#e8b96a',backgroundColor:'transparent',tension:.4,pointRadius:3,yAxisID:'y2',borderDash:[4,4]}
   ]},options:{responsive:true,plugins:{legend:{labels:{color:'#666',font:{size:11}}}},scales:{x:{ticks:{color:'#444'},grid:{color:'#1a1a1a'}},y:{ticks:{color:'#666'},grid:{color:'#1a1a1a'},min:0,max:100},y2:{ticks:{color:'#e8b96a'},grid:{display:false},position:'right',min:3.5,max:5.1}}}});
+}
+
+
+function buscarConcorrentes() {
+  const btn  = document.getElementById('btn-concorrentes');
+  const icon = document.getElementById('icon-conc');
+  if (!btn) return;
+  btn.disabled = true;
+  if (icon) icon.textContent = '⏳';
+  btn.style.color = '#f59e0b';
+  fetch(`/negocio/${NEG_ID}/concorrentes`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        location.reload();
+      } else {
+        alert('Erro ao buscar concorrentes: ' + d.msg);
+        btn.disabled = false;
+        if (icon) icon.textContent = '↺';
+        btn.style.color = '';
+      }
+    })
+    .catch(() => {
+      btn.disabled = false;
+      if (icon) icon.textContent = '↺';
+    });
 }
 
 function analisarAgora(){
