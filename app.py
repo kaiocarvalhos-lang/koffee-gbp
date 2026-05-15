@@ -12,9 +12,8 @@ import requests
 app = Flask(__name__, template_folder='.')
 app.secret_key = os.environ.get("SECRET_KEY", "gbp-analyzer-secret-2025")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-# Supabase/PostgreSQL em produção, SQLite local para desenvolvimento
 _db_url = os.environ.get("DATABASE_URL", "")
-if _db_url.startswith("postgres://"):          # Render/Heroku retornam postgres:// (depreciado)
+if _db_url.startswith("postgres://"):
     _db_url = _db_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = _db_url or "sqlite:///" + os.path.join(BASE_DIR, "gbp_analyzer.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -109,7 +108,6 @@ def _normalize(place):
     }
 
 def buscar_negocio_api(neg):
-    # Camada 1: CID direto
     if neg.cid:
         try:
             data = _serp({"engine": "google_maps", "type": "place", "data_cid": neg.cid})
@@ -118,7 +116,6 @@ def buscar_negocio_api(neg):
                 return _normalize(place), None
         except Exception:
             pass
-    # Camada 2: busca por nome + cidade
     queries = [
         f"{neg.nome} {neg.cidade}",
         f"{neg.nome} {neg.cidade} {neg.categoria}",
@@ -134,7 +131,7 @@ def buscar_negocio_api(neg):
                     titulo = (res.get("title") or "").lower()
                     if any(p in titulo for p in palavras if len(p) > 3):
                         return res, None
-                return results[0], None  # fallback: primeiro resultado
+                return results[0], None
         except Exception:
             continue
     return None, "Não encontrado"
@@ -177,7 +174,6 @@ def _salvar_diag(neg, r):
         titulo_gmb = r.get("title", ""),
         raw_json   = json.dumps(r, ensure_ascii=False),
     )
-    # atualiza CID se ainda não tinha
     if r.get("data_cid") and not neg.cid:
         neg.cid = r["data_cid"]
     db.session.add(d)
@@ -233,19 +229,16 @@ def dashboard():
     negocios   = Negocio.query.filter_by(ativo=True).order_by(Negocio.categoria, Negocio.nome).all()
     job        = JobStatus.query.first()
     categorias = sorted(set(n.categoria for n in negocios if n.categoria))
-
     neg_data = []
     for n in negocios:
         if cat_filter and n.categoria != cat_filter:
             continue
         ultimo = n.diagnosticos[0] if n.diagnosticos else None
         neg_data.append({"neg": n, "ultimo": ultimo})
-
     com_diag    = [d for d in neg_data if d["ultimo"]]
     criticas    = sum(1 for d in com_diag if d["ultimo"].score < 50)
     sem_site    = sum(1 for d in com_diag if not d["ultimo"].site_ok)
     media_score = round(sum(d["ultimo"].score for d in com_diag) / len(com_diag)) if com_diag else 0
-
     return render_template("dashboard.html",
         neg_data=neg_data, job=job, categorias=categorias,
         cat_filter=cat_filter, criticas=criticas,
@@ -254,7 +247,7 @@ def dashboard():
     )
 
 # ══════════════════════════════════════
-#  BUSCA (para o modal)
+#  BUSCA
 # ══════════════════════════════════════
 @app.route("/api/buscar")
 @login_required
@@ -333,31 +326,23 @@ def importar_csv():
     try:
         stream = io.StringIO(f.stream.read().decode("utf-8-sig"), newline=None)
         reader = csv.DictReader(stream)
-        # normaliza nomes das colunas (remove espaços extras)
         reader.fieldnames = [c.strip() for c in (reader.fieldnames or [])]
-
         def _cidade(end):
-            # extrai cidade do endereço: "..., Cidade - UF, CEP, Brasil"
             m = _re.search(r',\s*([^,\-]+?)\s*-\s*[A-Z]{2},', str(end or ''))
             return m.group(1).strip() if m else 'Brasil'
-
         def _cid(url):
             m = _re.search(r'cid=(\d+)', str(url or ''))
             return m.group(1) if m else ''
-
         def _wa(val):
             v = str(val or '')
             if v in ('nan', 'NÃO ENCONTRADO', '#ERROR!', ''): return ''
             return _re.sub(r'\D', '', v)
-
         def _nota(val):
             try: return float(str(val).replace(',', '.'))
             except: return 0.0
-
         def _avs(val):
             try: return int(val)
             except: return 0
-
         adicionados = 0
         for row in reader:
             nome = (row.get('Nome') or row.get('nome') or '').strip()
@@ -452,7 +437,78 @@ def job_status():
     })
 
 # ══════════════════════════════════════
-#  DETALHE DO NEGÓCIO
+#  DETALHE DO NEGÓCIO — helpers
+# ══════════════════════════════════════
+def _get_criterios(neg, d):
+    """20 critérios derivados dos dados do banco."""
+    if not d:
+        return [], 0, 0, 0
+    nota = float(d.nota or 0)
+    avs  = int(d.avaliacoes or 0)
+    def st(cond_ok, cond_warn=False):
+        if cond_ok:   return "ok"
+        if cond_warn: return "warn"
+        return "bad"
+    def nota_label(n):
+        if n >= 4.5: return "Excelente"
+        if n >= 4.0: return "Regular — meta: 4.5+"
+        return "Crítica — prioridade máxima"
+    def avs_label(a):
+        if a >= 500: return "Excelente"
+        if a >= 100: return "Bom"
+        return "Baixo — estratégia de captação necessária"
+    criterios = [
+        {"g":"Informações básicas","n":"Nome do negócio",          "s":"ok",                         "i":"Nome cadastrado e verificado no perfil"},
+        {"g":"Informações básicas","n":"Endereço e localização",   "s":"ok",                         "i":"Endereço verificado, pin correto no Google Maps"},
+        {"g":"Informações básicas","n":"Telefone de contato",      "s":st(bool(d.telefone)),         "i":d.telefone or "Telefone não encontrado no perfil"},
+        {"g":"Informações básicas","n":"Site próprio vinculado",   "s":st(d.site_ok),               "i":(d.website[:45]+"…") if d.site_ok and d.website else "Nenhum site vinculado ao perfil"},
+        {"g":"Informações básicas","n":"WhatsApp Business",        "s":st(bool(neg.wa)),             "i":neg.wa or "Sem WhatsApp — perde conversões diretas"},
+        {"g":"Horários","n":"Horário de funcionamento",            "s":st(d.hrs_ok),                 "i":"Todos os dias preenchidos" if d.hrs_ok else "Horários não preenchidos"},
+        {"g":"Horários","n":"Status aberto / fechado",             "s":st(bool(d.open_state), True), "i":d.open_state or "Status não identificado"},
+        {"g":"Horários","n":"Horários especiais e feriados",       "s":"warn",                       "i":"Verificar manualmente no perfil"},
+        {"g":"Fotos","n":"Foto de capa / perfil",                  "s":st(d.foto_ok),                "i":"Foto presente" if d.foto_ok else "Sem foto de capa profissional"},
+        {"g":"Fotos","n":"Logo e identidade visual",               "s":"warn",                       "i":"Verificar resolução mínima (250x250px)"},
+        {"g":"Fotos","n":"Fotos do interior",                      "s":"warn",                       "i":"Verificar quantidade — recomendado mínimo 10"},
+        {"g":"Fotos","n":"Fotos de produtos / cardápio",           "s":"warn",                       "i":"Verificar — impacta diretamente o ranqueamento"},
+        {"g":"Fotos","n":"Fotos do exterior / fachada",            "s":"warn",                       "i":"Facilita a identificação do local pelos clientes"},
+        {"g":"Reputação","n":"Nota média de avaliações",           "s":st(nota>=4.5, nota>=4.0),    "i":str(nota)+"★ — "+nota_label(nota)},
+        {"g":"Reputação","n":"Volume de avaliações",               "s":st(avs>=500, avs>=100),      "i":str(avs)+" avaliações — "+avs_label(avs)},
+        {"g":"Reputação","n":"Taxa de resposta a avaliações",      "s":"warn",                       "i":"Verificar — Google penaliza quem ignora avaliações"},
+        {"g":"Reputação","n":"Publicações (Posts GMB)",            "s":"warn",                       "i":"Verificar data do último post — recomendado 2x/semana"},
+        {"g":"Completude","n":"Descrição do negócio",              "s":st(d.desc_ok),               "i":(d.descricao[:50]+"…") if d.desc_ok and d.descricao else "Campo em branco — perde palavras-chave de SEO"},
+        {"g":"Completude","n":"Preço / faixa de preço",            "s":st(bool(d.preco), False),    "i":d.preco or "Preço não cadastrado no perfil"},
+        {"g":"Completude","n":"Atributos e serviços",              "s":"warn",                       "i":"Verificar: Wi-fi, pagamento, acessibilidade…"},
+    ]
+    bons  = sum(1 for c in criterios if c["s"] == "ok")
+    regs  = sum(1 for c in criterios if c["s"] == "warn")
+    ruins = sum(1 for c in criterios if c["s"] == "bad")
+    return criterios, bons, regs, ruins
+
+def _get_concorrentes(neg, ultimo):
+    """Ranking de concorrentes da mesma categoria no banco."""
+    todos = Negocio.query.filter(
+        Negocio.ativo == True,
+        Negocio.categoria == neg.categoria,
+        Negocio.id != neg.id
+    ).order_by(Negocio.nome).all()
+    lista = []
+    for n in todos:
+        d = n.diagnosticos[0] if n.diagnosticos else None
+        lista.append({"id":n.id,"nome":n.nome,"cidade":n.cidade,
+            "score":d.score if d else None,"nota":d.nota if d else n.r_base,
+            "avs":d.avaliacoes if d else n.a_base,"is_self":False})
+    lista.append({"id":neg.id,"nome":neg.nome,"cidade":neg.cidade,
+        "score":ultimo.score if ultimo else None,"nota":ultimo.nota if ultimo else neg.r_base,
+        "avs":ultimo.avaliacoes if ultimo else neg.a_base,"is_self":True})
+    lista.sort(key=lambda x: (x["score"] is not None, x["score"] or 0), reverse=True)
+    lider = lista[0]["score"] if lista and lista[0]["score"] is not None else None
+    for i, item in enumerate(lista):
+        item["pos"] = i + 1
+        item["gap"] = (item["score"] - lider) if (item["score"] and lider) else None
+    return lista[:8]
+
+# ══════════════════════════════════════
+#  DETALHE DO NEGÓCIO — rota
 # ══════════════════════════════════════
 @app.route("/negocio/<int:neg_id>")
 @login_required
@@ -460,27 +516,34 @@ def negocio(neg_id):
     neg    = Negocio.query.get_or_404(neg_id)
     diags  = neg.diagnosticos
     ultimo = diags[0] if diags else None
-
     historico    = list(reversed(diags[:10]))
     chart_labels = [d.data.strftime("%d/%m") for d in historico]
     chart_scores = [d.score for d in historico]
     chart_notas  = [d.nota  for d in historico]
-
     issues = []
     if ultimo:
-        if not ultimo.wa_ok:   issues.append({"crit": True,  "t": "Sem WhatsApp no perfil",       "d": "Clientes não têm como entrar em contato direto pelo perfil Google."})
-        if not ultimo.site_ok: issues.append({"crit": True,  "t": "Sem site próprio vinculado",    "d": "Reduz autoridade e visibilidade nas buscas locais."})
-        if not ultimo.hrs_ok:  issues.append({"crit": True,  "t": "Horários não preenchidos",      "d": "O Google penaliza perfis incompletos no ranqueamento."})
-        if not ultimo.desc_ok: issues.append({"crit": False, "t": "Sem descrição do negócio",      "d": "Descrições com palavras-chave melhoram o SEO local."})
-        if ultimo.nota < 4.4:  issues.append({"crit": True,  "t": f"Avaliação {ultimo.nota} — abaixo do ideal", "d": "Concorrentes com 4.5+ aparecem primeiro nos resultados."})
-        if ultimo.avaliacoes < 150: issues.append({"crit": False, "t": f"Poucas avaliações ({ultimo.avaliacoes})", "d": "Estratégia de captação pode mudar isso rapidamente."})
-
+        if not ultimo.wa_ok:
+            issues.append({"crit":True,  "t":"Sem WhatsApp no perfil",      "d":"Clientes não têm como entrar em contato direto pelo perfil Google."})
+        if not ultimo.site_ok:
+            issues.append({"crit":True,  "t":"Sem site próprio vinculado",   "d":"Reduz autoridade e visibilidade nas buscas locais."})
+        if not ultimo.hrs_ok:
+            issues.append({"crit":True,  "t":"Horários não preenchidos",     "d":"O Google penaliza perfis incompletos no ranqueamento."})
+        if not ultimo.desc_ok:
+            issues.append({"crit":False, "t":"Sem descrição do negócio",     "d":"Descrições com palavras-chave melhoram o SEO local."})
+        if ultimo.nota < 4.4:
+            issues.append({"crit":True,  "t":f"Avaliação {ultimo.nota} — abaixo do ideal","d":"Concorrentes com 4.5+ aparecem primeiro nos resultados."})
+        if ultimo.avaliacoes < 150:
+            issues.append({"crit":False, "t":f"Poucas avaliações ({ultimo.avaliacoes})","d":"Estratégia de captação pode mudar isso rapidamente."})
+    criterios, bons, regs, ruins = _get_criterios(neg, ultimo)
+    concorrentes = _get_concorrentes(neg, ultimo)
     return render_template("negocio.html",
         neg=neg, ultimo=ultimo, diags=diags,
         chart_labels=json.dumps(chart_labels),
         chart_scores=json.dumps(chart_scores),
         chart_notas=json.dumps(chart_notas),
         issues=issues,
+        criterios=criterios, bons=bons, regs=regs, ruins=ruins,
+        concorrentes=concorrentes,
     )
 
 # ══════════════════════════════════════
