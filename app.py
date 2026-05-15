@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, j
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
+from flask_compress import Compress
 
 # ══════════════════════════════════════
 #  APP & DB
@@ -17,7 +18,14 @@ if _db_url.startswith("postgres://"):
     _db_url = _db_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = _db_url or "sqlite:///" + os.path.join(BASE_DIR, "gbp_analyzer.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["COMPRESS_MIMETYPES"] = [
+    "text/html", "text/css", "application/javascript",
+    "application/json", "text/plain"
+]
+app.config["COMPRESS_LEVEL"] = 6   # 1-9, balanço velocidade/compressão
+app.config["COMPRESS_MIN_SIZE"] = 500  # só comprime > 500 bytes
 db = SQLAlchemy(app)
+Compress(app)   # gzip automático em todas as respostas
 
 SKEY = os.environ.get("SERP_API_KEY", "05746604c702ad7a4456cbbf34ae1e356f6ed6b146a5f85f0ac9cdfb8a71f15e")
 
