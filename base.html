@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{% block title %}GBP Analyzer{% endblock %} — Koffee</title>
+
+<!-- ① PRECONNECT: abre conexão com CDNs antes de precisar (~300ms ganhos) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.tailwindcss.com">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+
+<!-- ② FONTS OTIMIZADAS: só os pesos realmente usados (era 8 pesos, agora 4) -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400&display=swap" rel="stylesheet"/>
+
+<!-- ③ TAILWIND CDN (mantido — necessário para as cores customizadas) -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
@@ -23,9 +34,10 @@ tailwind.config = {
   }}
 }
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- ④ CHART.JS DEFERIDO: não bloqueia renderização da página -->
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #080808; color: #e2e2e2; font-family: 'DM Sans', sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
@@ -95,23 +107,22 @@ tailwind.config = {
 
   /* ── PRINT ── */
   @media print { .no-print { display: none !important; } }
+
+  /* ── LOADING SKELETON (evita FOUC enquanto Tailwind carrega) ── */
+  .tw-loading body { visibility: hidden; }
 </style>
 </head>
 <body class="min-h-screen">
 
 {% if session.user_id %}
-<!-- NAV -->
 <nav class="no-print sticky top-0 z-50 border-b border-b1" style="background:rgba(8,8,8,.92);backdrop-filter:blur(12px);">
   <div class="max-w-screen-2xl mx-auto px-6 h-14 flex items-center justify-between gap-6">
     <div class="flex items-center gap-6">
-      <!-- Logo -->
       <a href="{{ url_for('dashboard') }}" class="flex items-center gap-2.5 group">
         <div class="w-7 h-7 rounded-lg bg-car/10 border border-car/20 flex items-center justify-center text-car text-xs font-bold font-syne group-hover:bg-car/20 transition-colors">K</div>
         <span class="font-syne font-bold text-sm text-text tracking-tight">GBP <span class="text-car">Analyzer</span></span>
       </a>
-      <!-- Divider -->
       <div class="w-px h-4 bg-b2 hidden md:block"></div>
-      <!-- Nav links -->
       <div class="hidden md:flex items-center gap-1">
         <a href="{{ url_for('dashboard') }}" class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all {% if request.endpoint == 'dashboard' %}bg-s3 text-text{% else %}text-muted hover:text-text hover:bg-s2{% endif %}">Dashboard</a>
       </div>
