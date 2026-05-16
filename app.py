@@ -618,12 +618,36 @@ def _buscar_concorrentes_google(neg, ultimo):
     return lista
 
 def _get_concorrentes(neg, ultimo):
-    """Lê concorrentes do cache (Google). Retorna [] se ainda não foi buscado."""
+    """Lê concorrentes do cache (Google). Retorna [] se ainda não foi buscado.
+    Re-avalia is_self com a lógica corrigida para corrigir caches antigos
+    sem precisar de nova chamada à API.
+    """
     cached = ConcorrenteCache.query.filter_by(neg_id=neg.id)                .order_by(ConcorrenteCache.score.desc()).all()
     if not cached:
         return []
+
+    # Recalcula is_self com lógica corrigida (exclui cidade e stop words)
+    city_words = set(_norm_word(w) for w in neg.cidade.split() if len(w) >= 3)
+    self_words = set(
+        _norm_word(w) for w in neg.nome.split()
+        if len(w) >= 3
+        and _norm_word(w) not in _STOP
+        and _norm_word(w) not in city_words
+    )
+
+    self_found = False
     lista = []
     for c in cached:
+        # CID match (mais confiável) ou nome match com lógica corrigida
+        cid_match  = neg.cid and c.nome == neg.nome  # nome exato = é o fallback
+        gw = set(_norm_word(w) for w in c.nome.split()
+                 if len(w) >= 3 and _norm_word(w) not in _STOP)
+        name_match = bool(self_words & gw) and len(self_words) > 0
+        is_self    = cid_match or name_match
+
+        if is_self:
+            self_found = True
+
         lista.append({
             "id":      None,
             "nome":    c.nome,
@@ -631,11 +655,26 @@ def _get_concorrentes(neg, ultimo):
             "score":   c.score,
             "nota":    c.nota,
             "avs":     c.avaliacoes,
-            "is_self": c.is_self,
-            "pos":     c.pos,
-            "gap":     c.gap,
+            "is_self": is_self,
+            "pos":     0,
+            "gap":     0,
         })
-    # Recalcula posição / gap (garante consistência mesmo se DB desatualizado)
+
+    # Se nenhum foi identificado como self, marca o nome exato ou o de menor score
+    if not self_found and ultimo:
+        # Procura pelo nome exato do negócio no cache
+        exact = next((item for item in lista if item["nome"] == neg.nome), None)
+        if exact:
+            exact["is_self"] = True
+        else:
+            # Adiciona o próprio negócio como entrada extra
+            lista.append({
+                "id": None, "nome": neg.nome, "cidade": neg.cidade,
+                "score": ultimo.score, "nota": ultimo.nota,
+                "avs": ultimo.avaliacoes, "is_self": True, "pos": 0, "gap": 0,
+            })
+
+    # Ordena e calcula posição / gap
     lista.sort(key=lambda x: x["score"], reverse=True)
     lider = lista[0]["score"] if lista else 0
     for i, item in enumerate(lista):
