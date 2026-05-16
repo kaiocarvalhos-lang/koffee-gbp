@@ -27,7 +27,7 @@ app.config["COMPRESS_MIN_SIZE"] = 500  # só comprime > 500 bytes
 db = SQLAlchemy(app)
 Compress(app)   # gzip automático em todas as respostas
 
-SKEY = os.environ.get("SERP_API_KEY", "05746604c702ad7a4456cbbf34ae1e356f6ed6b146a5f85f0ac9cdfb8a71f15e")
+SKEY = os.environ.get("SERP_API_KEY", "")  # chave configurada no Render > Environment
 
 # ══════════════════════════════════════
 #  MODELS
