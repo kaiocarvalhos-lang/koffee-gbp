@@ -549,10 +549,14 @@ def _buscar_concorrentes_google(neg, ultimo):
     # Apaga cache antigo deste negócio
     ConcorrenteCache.query.filter_by(neg_id=neg.id).delete()
 
-    # Palavras significativas do nome do negócio (sem stop words, normalizadas)
+    # Palavras significativas do nome (sem stop words, sem nome da cidade, normalizadas)
+    # Exclui cidade para evitar falsos positivos em negócios que usam o nome da cidade
+    city_words = set(_norm_word(w) for w in neg.cidade.split() if len(w) >= 3)
     self_words = set(
         _norm_word(w) for w in neg.nome.split()
-        if len(w) >= 3 and _norm_word(w) not in _STOP
+        if len(w) >= 3
+        and _norm_word(w) not in _STOP
+        and _norm_word(w) not in city_words
     )
 
     lista = []
