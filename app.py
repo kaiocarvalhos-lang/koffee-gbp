@@ -96,6 +96,8 @@ class ConcorrenteCache(db.Model):
     is_self    = db.Column(db.Boolean, default=False)
     pos        = db.Column(db.Integer, default=0)
     gap        = db.Column(db.Integer, default=0)
+    lat        = db.Column(db.Float, default=None)
+    lng        = db.Column(db.Float, default=None)
 
 
 # ══════════════════════════════════════
@@ -578,6 +580,7 @@ def _buscar_concorrentes_google(neg, ultimo):
         if is_self:
             self_found = True
 
+        gps = r.get("gps_coordinates") or {}
         c = ConcorrenteCache(
             neg_id     = neg.id,
             nome       = nome_google,
@@ -586,6 +589,8 @@ def _buscar_concorrentes_google(neg, ultimo):
             avaliacoes = int(r.get("reviews") or 0),
             score      = score,
             is_self    = is_self,
+            lat        = float(gps.get("latitude"))  if gps.get("latitude")  else None,
+            lng        = float(gps.get("longitude")) if gps.get("longitude") else None,
         )
         db.session.add(c)
         lista.append({"nome": nome_google, "nota": float(r.get("rating") or 0),
@@ -660,6 +665,8 @@ def _get_concorrentes(neg, ultimo):
             "is_self": is_self,
             "pos":     0,
             "gap":     0,
+            "lat":     c.lat,
+            "lng":     c.lng,
         })
 
     # Se nenhum foi identificado como self, marca o nome exato ou o de menor score
@@ -728,6 +735,14 @@ def negocio(neg_id):
 # ══════════════════════════════════════
 def init_db():
     db.create_all()
+    # Migração: adiciona colunas lat/lng se não existirem (para DBs antigos)
+    from sqlalchemy import text
+    for col in ("lat REAL", "lng REAL"):
+        try:
+            db.session.execute(text(f"ALTER TABLE concorrente_cache ADD COLUMN {col}"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     if not User.query.first():
         db.session.add(User(
             nome  = "Kaio Carvalho",
