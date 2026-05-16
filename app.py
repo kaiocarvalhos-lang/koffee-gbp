@@ -521,6 +521,21 @@ def _get_criterios(neg, d):
     return criterios, bons, regs, ruins
 
 
+import unicodedata as _ud
+
+def _norm_word(w):
+    """Normaliza palavra: remove acentos e converte para minúsculo."""
+    return _ud.normalize('NFD', w.lower()).encode('ascii', 'ignore').decode()
+
+# Palavras genéricas que não identificam um negócio específico
+_STOP = {
+    'cafe', 'coffee', 'bar', 'restaurante', 'restaurant', 'lanchonete',
+    'padaria', 'bakery', 'bistro', 'botanica', 'botanic', 'cultural',
+    'conceito', 'gourmet', 'artesanal', 'especial', 'especialidades',
+    'torrefacao', 'mineiro', 'esplanada', 'brunch', 'negocio',
+    'and', 'the', 'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'e',
+}
+
 def _buscar_concorrentes_google(neg, ultimo):
     """
     Busca concorrentes reais no Google Maps via SerpAPI.
@@ -534,8 +549,11 @@ def _buscar_concorrentes_google(neg, ultimo):
     # Apaga cache antigo deste negócio
     ConcorrenteCache.query.filter_by(neg_id=neg.id).delete()
 
-    # Detecta se o próprio negócio aparece nos resultados
-    self_words = set(w.lower() for w in neg.nome.split() if len(w) >= 3)
+    # Palavras significativas do nome do negócio (sem stop words, normalizadas)
+    self_words = set(
+        _norm_word(w) for w in neg.nome.split()
+        if len(w) >= 3 and _norm_word(w) not in _STOP
+    )
 
     lista = []
     self_found = False
@@ -543,11 +561,13 @@ def _buscar_concorrentes_google(neg, ultimo):
     for r in results:
         score, site_ok, hrs_ok, desc_ok, foto_ok = calc_score(r, "")
         nome_google = r.get("title", "")
-        google_words = set(w.lower() for w in nome_google.split() if len(w) >= 3)
-
         # Identifica se é o próprio negócio (CID ou nome)
         cid_match  = neg.cid and str(r.get("data_cid", "")) == str(neg.cid)
-        name_match = bool(self_words & google_words)
+        google_words_norm = set(
+            _norm_word(w) for w in nome_google.split()
+            if len(w) >= 3 and _norm_word(w) not in _STOP
+        )
+        name_match = bool(self_words & google_words_norm) and len(self_words) > 0
         is_self    = cid_match or name_match
         if is_self:
             self_found = True
