@@ -12,11 +12,14 @@
         {% if cat_filter %}
         <span class="px-2 py-0.5 rounded-md bg-car/10 text-car text-xs font-medium border border-car/20">{{ cat_filter }}</span>
         {% endif %}
+        {% if cidade_filter %}
+        <span class="px-2 py-0.5 rounded-md bg-car/10 text-car text-xs font-medium border border-car/20">{{ cidade_filter }}</span>
+        {% endif %}
       </div>
       <p class="text-xs text-muted">
         {{ total }} negócios
         {% if analisadas %} · <span class="text-text/50">{{ analisadas }} analisados</span>{% endif %}
-        {% if cat_filter %} · <a href="{{ url_for('dashboard') }}" class="text-car hover:underline">Ver todos</a>{% endif %}
+        {% if cat_filter or cidade_filter %} · <a href="{{ url_for('dashboard') }}" class="text-car hover:underline">Ver todos</a>{% endif %}
       </p>
     </div>
     <div class="flex gap-2 flex-wrap no-print">
@@ -76,21 +79,46 @@
     </div>
   </div>
 
-  <!-- CATEGORY FILTER -->
-  {% if categorias %}
-  <div class="flex gap-1.5 flex-wrap mb-5 no-print">
-    <a href="{{ url_for('dashboard') }}"
-       class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
-              {% if not cat_filter %}bg-s3 border-b3 text-text{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
-      Todos <span class="ml-1 opacity-50">{{ total }}</span>
-    </a>
-    {% for cat in categorias %}
-    <a href="{{ url_for('dashboard', cat=cat) }}"
-       class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
-              {% if cat_filter == cat %}bg-car/10 border-car/30 text-car{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
-      {{ cat }}
-    </a>
-    {% endfor %}
+  <!-- FILTROS: CATEGORIA + CIDADE -->
+  {% if categorias or cidades %}
+  <div class="flex flex-col gap-2 mb-5 no-print">
+
+    {% if categorias %}
+    <div class="flex gap-1.5 flex-wrap items-center">
+      <span class="text-xs text-dim uppercase tracking-wider mr-1 flex-shrink-0">Categoria</span>
+      <a href="{{ url_for('dashboard', cidade=cidade_filter) }}"
+         class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                {% if not cat_filter %}bg-s3 border-b3 text-text{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
+        Todas
+      </a>
+      {% for cat in categorias %}
+      <a href="{{ url_for('dashboard', cat=cat, cidade=cidade_filter) }}"
+         class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                {% if cat_filter == cat %}bg-car/10 border-car/30 text-car{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
+        {{ cat }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if cidades %}
+    <div class="flex gap-1.5 flex-wrap items-center">
+      <span class="text-xs text-dim uppercase tracking-wider mr-1 flex-shrink-0">Cidade</span>
+      <a href="{{ url_for('dashboard', cat=cat_filter) }}"
+         class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                {% if not cidade_filter %}bg-s3 border-b3 text-text{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
+        Todas
+      </a>
+      {% for cidade in cidades %}
+      <a href="{{ url_for('dashboard', cat=cat_filter, cidade=cidade) }}"
+         class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                {% if cidade_filter == cidade %}bg-car/10 border-car/30 text-car{% else %}border-b1 text-muted hover:text-text hover:border-b2{% endif %}">
+        {{ cidade }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
   </div>
   {% endif %}
 
@@ -129,7 +157,6 @@
           <tr class="neg-row" data-nome="{{ d.neg.nome|lower }} {{ d.neg.categoria|lower }} {{ d.neg.cidade|lower }}"
               onclick="window.location='/negocio/{{ d.neg.id }}'">
 
-            <!-- Score -->
             <td>
               {% if d.ultimo %}
               <span class="score-{{ score_class(d.ultimo.score) }} px-2.5 py-1 rounded-lg text-xs font-bold font-mono inline-block">
@@ -140,57 +167,44 @@
               {% endif %}
             </td>
 
-            <!-- Nome -->
             <td>
               <span class="font-medium text-text/90" style="max-width:180px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                 {{ d.neg.nome }}
               </span>
             </td>
 
-            <!-- Categoria -->
             <td>
               <span class="text-xs px-2 py-0.5 rounded-md bg-s3 text-muted border border-b2">{{ d.neg.categoria }}</span>
             </td>
 
-            <!-- Cidade -->
             <td class="text-muted text-xs">{{ d.neg.cidade }}</td>
 
-            <!-- Nota -->
             <td>
               <span class="text-warn text-sm font-medium">{{ d.ultimo.nota if d.ultimo else d.neg.r_base }}</span>
               <span class="text-warn text-xs opacity-60">★</span>
             </td>
 
-            <!-- Avaliações -->
             <td class="font-mono text-xs text-muted">{{ "{:,}".format(d.ultimo.avaliacoes if d.ultimo else d.neg.a_base) }}</td>
 
-            <!-- Site -->
             <td style="text-align:center">
               {% if d.ultimo %}
-                {% if d.ultimo.site_ok %}
-                  <span class="text-ok text-base">✓</span>
-                {% else %}
-                  <span class="text-bad/60 text-sm">✕</span>
-                {% endif %}
+                {% if d.ultimo.site_ok %}<span class="text-ok text-base">✓</span>
+                {% else %}<span class="text-bad/60 text-sm">✕</span>{% endif %}
               {% else %}<span class="text-dim text-xs">—</span>{% endif %}
             </td>
 
-            <!-- WA -->
             <td style="text-align:center">
               {% if d.neg.wa %}<span class="text-ok text-base">✓</span>{% else %}<span class="text-bad/60 text-sm">✕</span>{% endif %}
             </td>
 
-            <!-- Horários -->
             <td style="text-align:center">
               {% if d.ultimo %}
                 {% if d.ultimo.hrs_ok %}<span class="text-ok text-base">✓</span>{% else %}<span class="text-bad/60 text-sm">✕</span>{% endif %}
               {% else %}<span class="text-dim text-xs">—</span>{% endif %}
             </td>
 
-            <!-- Data -->
             <td class="font-mono text-xs text-dim">{{ d.ultimo.data.strftime("%d/%m %H:%M") if d.ultimo else "—" }}</td>
 
-            <!-- Ações -->
             <td class="no-print">
               <div class="flex items-center gap-1" onclick="event.stopPropagation()">
                 <button onclick="analisarUm({{ d.neg.id }}, this)" class="btn-ghost p-1.5 rounded-md" title="Reanalisar">
@@ -231,7 +245,6 @@
       </button>
     </div>
     <div class="p-6">
-      <!-- Search -->
       <div class="flex gap-2 mb-1">
         <input id="buscaNome" type="text" placeholder="Nome do negócio (ex: Café Central)" class="flex-1 py-2.5 px-3"
                onkeydown="if(event.key==='Enter') buscarGMaps()"/>
@@ -240,32 +253,16 @@
       </div>
       <div id="buscaStatus" class="text-xs text-muted mb-4 h-4"></div>
       <div id="buscaResultados" class="space-y-2 mb-6"></div>
-
-      <!-- Divider -->
       <div class="flex items-center gap-3 mb-5">
         <div class="flex-1 h-px bg-b1"></div>
         <span class="text-xs text-dim">ou adicionar manualmente</span>
         <div class="flex-1 h-px bg-b1"></div>
       </div>
-
-      <!-- Manual -->
       <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs text-muted mb-1.5">Nome *</label>
-          <input id="mNome" type="text" placeholder="Nome do negócio" class="w-full py-2 px-3"/>
-        </div>
-        <div>
-          <label class="block text-xs text-muted mb-1.5">Categoria</label>
-          <input id="mCat" type="text" placeholder="Ex: Cafeteria, Clínica, Restaurante" class="w-full py-2 px-3"/>
-        </div>
-        <div>
-          <label class="block text-xs text-muted mb-1.5">Cidade</label>
-          <input id="mCidade" type="text" value="Brasília" class="w-full py-2 px-3"/>
-        </div>
-        <div>
-          <label class="block text-xs text-muted mb-1.5">WhatsApp</label>
-          <input id="mWA" type="text" placeholder="(61) 99999-9999" class="w-full py-2 px-3"/>
-        </div>
+        <div><label class="block text-xs text-muted mb-1.5">Nome *</label><input id="mNome" type="text" placeholder="Nome do negócio" class="w-full py-2 px-3"/></div>
+        <div><label class="block text-xs text-muted mb-1.5">Categoria</label><input id="mCat" type="text" placeholder="Ex: Cafeteria, Clínica, Restaurante" class="w-full py-2 px-3"/></div>
+        <div><label class="block text-xs text-muted mb-1.5">Cidade</label><input id="mCidade" type="text" value="Brasília" class="w-full py-2 px-3"/></div>
+        <div><label class="block text-xs text-muted mb-1.5">WhatsApp</label><input id="mWA" type="text" placeholder="(61) 99999-9999" class="w-full py-2 px-3"/></div>
       </div>
       <button onclick="adicionarManual()" class="btn-primary mt-4 px-5 py-2.5 rounded-lg text-xs">Adicionar manualmente</button>
     </div>
@@ -288,8 +285,7 @@
       <div class="bg-s2 rounded-xl p-4 mb-4 border border-b1">
         <div class="text-xs text-muted font-mono leading-relaxed">
           <span class="text-car">nome</span>, <span class="text-car">categoria</span>, <span class="text-car">cidade</span>, <span class="text-car">whatsapp</span><br/>
-          <span class="text-dim">Ernesto Cafés, Cafeteria, Brasília, 61994531302</span><br/>
-          <span class="text-dim">Clínica X, Clínica, São Paulo,</span>
+          <span class="text-dim">Ernesto Cafés, Cafeteria, Brasília, 61994531302</span>
         </div>
       </div>
       <p class="text-xs text-muted mb-1">Também aceita o formato das listas de prospecção com as colunas <span class="text-text/60">Nome, Endereço, Whatsapp, URL Google Maps, Nota, Avaliações.</span></p>
@@ -306,14 +302,12 @@
 </div>
 
 <script>
-// Filtro
 function filtrar(v) {
   document.querySelectorAll('.neg-row').forEach(r => {
     r.style.display = r.dataset.nome.includes(v.toLowerCase()) ? '' : 'none';
   });
 }
 
-// Analisar todas
 function analisarTodas() {
   const btn = document.getElementById('btnAnalisar');
   btn.disabled = true;
@@ -325,7 +319,6 @@ function analisarTodas() {
   });
 }
 
-// Analisar um
 function analisarUm(id, btn) {
   btn.innerHTML = '<svg class="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>';
   btn.disabled = true;
@@ -335,7 +328,6 @@ function analisarUm(id, btn) {
   });
 }
 
-// Remover
 function remover(id, btn) {
   if (!confirm('Remover este negócio da lista?')) return;
   fetch(`/negocio/${id}/remover`, {method:'POST'}).then(r=>r.json()).then(d => {
@@ -343,7 +335,6 @@ function remover(id, btn) {
   });
 }
 
-// Poll
 function pollJob() {
   fetch('/job-status').then(r=>r.json()).then(d => {
     document.getElementById('progFill').style.width = d.pct + '%';
@@ -364,17 +355,14 @@ document.getElementById('btnAnalisar').innerHTML = '<span class="animate-spin in
 pollJob();
 {% endif %}
 
-// Modais
 function abrirBusca() { document.getElementById('modalBusca').classList.add('open'); document.getElementById('buscaNome').focus(); }
 function fecharBusca() { document.getElementById('modalBusca').classList.remove('open'); document.getElementById('buscaResultados').innerHTML=''; document.getElementById('buscaStatus').textContent=''; }
 function abrirCSV()   { document.getElementById('modalCSV').classList.add('open'); }
 function fecharCSV()  { document.getElementById('modalCSV').classList.remove('open'); }
 
-// Fechar modais ao clicar fora
 document.getElementById('modalBusca').addEventListener('click', function(e){ if(e.target===this) fecharBusca(); });
 document.getElementById('modalCSV').addEventListener('click',   function(e){ if(e.target===this) fecharCSV(); });
 
-// Buscar no Google Maps
 async function buscarGMaps() {
   const q      = document.getElementById('buscaNome').value.trim();
   const cidade = document.getElementById('buscaCidade').value.trim();
@@ -406,7 +394,7 @@ async function buscarGMaps() {
   } catch(e) { status.textContent = '✕ Erro: ' + e.message; }
 }
 
-function esc(s){ return (s||'').replace(/'/g,"\\'"); }
+function esc(s){ return (s||''').replace(/'/g,"\\'"); }
 
 async function adicionarDoMaps(btn, cid, nome, cidade, cat, nota, reviews) {
   btn.textContent = '…'; btn.disabled = true;
