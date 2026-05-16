@@ -320,6 +320,11 @@
     </button>
   </div>
 
+  {# Mapa de concorrentes #}
+  <div class="px-5 pt-5 pb-3 border-b border-b1">
+    <div id="mapa-concorrentes" style="height:260px;border-radius:10px;overflow:hidden;"></div>
+  </div>
+
   {# Gráfico de barras visual #}
   <div class="px-5 py-5 border-b border-b1" id="bar-chart-concorrentes">
     <div class="flex items-end gap-2 h-28">
@@ -448,6 +453,59 @@
 
 {# ── JS: toggle de visualização dos critérios ── #}
 <script>
+// ── Mapa de concorrentes (Leaflet + OpenStreetMap) ──────────────────────
+(function initMap() {
+  const el = document.getElementById('mapa-concorrentes');
+  if (!el) return;
+
+  const CONC = {{ concorrentes | tojson }};
+  const pts  = CONC.filter(c => c.lat && c.lng);
+  if (pts.length === 0) { el.style.display = 'none'; return; }
+
+  // Aguarda Leaflet carregar (defer)
+  function tryInit() {
+    if (typeof L === 'undefined') { setTimeout(tryInit, 100); return; }
+
+    const map = L.map('mapa-concorrentes', { zoomControl: true, scrollWheelZoom: false });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
+      maxZoom: 18,
+    }).addTo(map);
+
+    const markers = [];
+    pts.forEach(c => {
+      const color  = c.is_self ? '#c8893c'
+                   : c.score >= 75 ? '#22c55e'
+                   : c.score >= 50 ? '#f59e0b'
+                   : '#ef4444';
+      const radius = c.is_self ? 11 : 8;
+      const weight = c.is_self ? 3  : 2;
+
+      const m = L.circleMarker([c.lat, c.lng], {
+        radius, fillColor: color, color: '#fff',
+        weight, opacity: 1, fillOpacity: 0.92
+      }).addTo(map);
+
+      m.bindPopup(
+        `<div style="font-family:DM Sans,sans-serif;min-width:160px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px">${c.nome}</div>
+          <div style="font-size:12px;color:#555">Score: <b>${c.score ?? '—'}/100</b></div>
+          <div style="font-size:12px;color:#555">${c.nota ?? '—'}★ · ${(c.avs||0).toLocaleString('pt-BR')} avaliações</div>
+          ${c.is_self ? '<div style="font-size:11px;color:#c8893c;font-weight:600;margin-top:4px">▶ Você</div>' : ''}
+        </div>`
+      );
+      markers.push(m);
+    });
+
+    // Ajusta o zoom para mostrar todos os pontos
+    const group = L.featureGroup(markers);
+    map.fitBounds(group.getBounds().pad(0.35));
+  }
+  tryInit();
+})();
+
+
 function setCritView(view) {
   const grid = document.getElementById('crit-grid');
   const list = document.getElementById('crit-list');
@@ -528,10 +586,12 @@ function setCritView(view) {
   .score-num-ok{color:#00e676}.score-num-warn{color:#ffab00}.score-num-bad{color:#ff5252}.score-num-idle{color:#444}
   .score-lbl-ok{color:#00e676}.score-lbl-warn{color:#ffab00}.score-lbl-bad{color:#ff5252}
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLEo=" crossorigin=""></script>
 <style>
 @media print {
   /* Esconde chrome da UI */
-  .no-print, nav, #btn-grid, #btn-list, #btn-concorrentes,
+  .no-print, nav, #btn-grid, #btn-list, #btn-concorrentes, #mapa-concorrentes,
   #bar-chart-concorrentes, #evolucao-card { display: none !important; }
 
   /* Esconde canvas — nao imprimem */
