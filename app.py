@@ -248,14 +248,16 @@ def logout():
 @app.route("/")
 @login_required
 def dashboard():
-    cat_filter = request.args.get("cat", "")
-    negocios   = Negocio.query.filter_by(ativo=True).order_by(Negocio.categoria, Negocio.nome).all()
-    job        = JobStatus.query.first()
-    categorias = sorted(set(n.categoria for n in negocios if n.categoria))
+    cat_filter    = request.args.get("cat", "")
+    cidade_filter = request.args.get("cidade", "")
+    negocios      = Negocio.query.filter_by(ativo=True).order_by(Negocio.categoria, Negocio.nome).all()
+    job           = JobStatus.query.first()
+    categorias    = sorted(set(n.categoria for n in negocios if n.categoria))
+    cidades       = sorted(set(n.cidade    for n in negocios if n.cidade))
     neg_data = []
     for n in negocios:
-        if cat_filter and n.categoria != cat_filter:
-            continue
+        if cat_filter    and n.categoria != cat_filter:    continue
+        if cidade_filter and n.cidade    != cidade_filter: continue
         ultimo = n.diagnosticos[0] if n.diagnosticos else None
         neg_data.append({"neg": n, "ultimo": ultimo})
     com_diag    = [d for d in neg_data if d["ultimo"]]
@@ -263,8 +265,8 @@ def dashboard():
     sem_site    = sum(1 for d in com_diag if not d["ultimo"].site_ok)
     media_score = round(sum(d["ultimo"].score for d in com_diag) / len(com_diag)) if com_diag else 0
     return render_template("dashboard.html",
-        neg_data=neg_data, job=job, categorias=categorias,
-        cat_filter=cat_filter, criticas=criticas,
+        neg_data=neg_data, job=job, categorias=categorias, cidades=cidades,
+        cat_filter=cat_filter, cidade_filter=cidade_filter, criticas=criticas,
         sem_site=sem_site, media_score=media_score,
         total=len(negocios), analisadas=len(com_diag)
     )
