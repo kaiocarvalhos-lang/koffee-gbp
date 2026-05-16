@@ -83,6 +83,17 @@ class JobStatus(db.Model):
     finalizado = db.Column(db.DateTime)
     erros      = db.Column(db.Integer, default=0)
 
+class GeoGridCache(db.Model):
+    """Resultados do geo-grid de posicionamento local."""
+    id         = db.Column(db.Integer, primary_key=True)
+    neg_id     = db.Column(db.Integer, db.ForeignKey("negocio.id"), nullable=False)
+    atualizado = db.Column(db.DateTime, default=datetime.utcnow)
+    grid_size  = db.Column(db.Integer, default=5)
+    radius_km  = db.Column(db.Float,   default=1.0)
+    center_lat = db.Column(db.Float)
+    center_lng = db.Column(db.Float)
+    resultados = db.Column(db.Text, default="[]")  # JSON: [{lat,lng,rank}]
+
 class ConcorrenteCache(db.Model):
     """Concorrentes reais buscados no Google via SerpAPI."""
     id         = db.Column(db.Integer, primary_key=True)
@@ -393,7 +404,8 @@ def importar_csv():
 # ══════════════════════════════════════
 #  DIAGNÓSTICO
 # ══════════════════════════════════════
-_job_lock = threading.Lock()
+_job_lock   = threading.Lock()
+_grid_jobs  = {}  # neg_id -> {running, done, total, error}
 
 @app.route("/analisar", methods=["POST"])
 @login_required
@@ -475,6 +487,139 @@ def buscar_concorrentes_route(neg_id):
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)})
 
+
+
+# ══════════════════════════════════════
+#  GEO-GRID
+# ══════════════════════════════════════
+import math as _math
+
+def _grid_points(clat, clng, grid_size, radius_km):
+    """Gera os N×N pontos do geo-grid ao redor do centro."""
+    half  = grid_size // 2
+    d_lat = radius_km / 111.0
+    d_lng = radius_km / (111.0 * _math.cos(_math.radians(clat)))
+    pts   = []
+    for row in range(grid_size):
+        for col in range(grid_size):
+            pts.append({
+                "lat":  round(clat + (half - row) * d_lat / max(half, 1), 6),
+                "lng":  round(clng + (col - half) * d_lng / max(half, 1), 6),
+                "rank": None,
+            })
+    return pts
+
+def _rank_em_ponto(neg, lat, lng):
+    """Busca o negócio no Google Maps a partir de um ponto e retorna a posição."""
+    try:
+        data    = _serp({
+            "engine": "google_maps",
+            "type":   "search",
+            "q":      neg.categoria,
+            "ll":     f"@{lat},{lng},14z",
+        })
+        results = data.get("local_results", [])
+        city_words = set(_norm_word(w) for w in neg.cidade.split() if len(w) >= 3)
+        self_words = set(
+            _norm_word(w) for w in neg.nome.split()
+            if len(w) >= 3 and _norm_word(w) not in _STOP
+            and _norm_word(w) not in city_words
+        )
+        for i, r in enumerate(results[:20]):
+            cid_match = neg.cid and str(r.get("data_cid","")) == str(neg.cid)
+            gw = set(_norm_word(w) for w in r.get("title","").split()
+                     if len(w) >= 3 and _norm_word(w) not in _STOP)
+            name_match = bool(self_words & gw) and len(self_words) > 0
+            if cid_match or name_match:
+                return i + 1
+        return 20  # não encontrado no top 20
+    except Exception:
+        return None
+
+def _run_geogrid(neg_id, grid_size, radius_km, clat, clng):
+    """Thread: executa o geo-grid e salva no banco."""
+    with app.app_context():
+        neg   = Negocio.query.get(neg_id)
+        pts   = _grid_points(clat, clng, grid_size, radius_km)
+        total = len(pts)
+        _grid_jobs[neg_id] = {"running": True, "done": 0, "total": total, "error": None}
+
+        for i, pt in enumerate(pts):
+            rank       = _rank_em_ponto(neg, pt["lat"], pt["lng"])
+            pt["rank"] = rank
+            _grid_jobs[neg_id]["done"] = i + 1
+            time.sleep(0.5)  # respeita rate limit SerpAPI
+
+        # Salva resultado
+        GeoGridCache.query.filter_by(neg_id=neg_id).delete()
+        gc = GeoGridCache(
+            neg_id     = neg_id,
+            grid_size  = grid_size,
+            radius_km  = radius_km,
+            center_lat = clat,
+            center_lng = clng,
+            resultados = json.dumps(pts),
+        )
+        db.session.add(gc)
+        db.session.commit()
+        _grid_jobs[neg_id]["running"] = False
+
+@app.route("/negocio/<int:neg_id>/geogrid", methods=["POST"])
+@login_required
+def gerar_geogrid(neg_id):
+    neg = Negocio.query.get_or_404(neg_id)
+    if _grid_jobs.get(neg_id, {}).get("running"):
+        return jsonify({"ok": False, "msg": "Geo-grid já em execução."})
+
+    grid_size = int((request.get_json() or {}).get("grid_size", 5))
+    radius_km = float((request.get_json() or {}).get("radius_km", 1.0))
+    grid_size = max(3, min(7, grid_size))  # limita entre 3 e 7
+
+    # Precisa de coordenadas do negócio
+    self_cache = ConcorrenteCache.query.filter_by(neg_id=neg_id, is_self=True).first()
+    if not self_cache:
+        self_cache = ConcorrenteCache.query.filter_by(neg_id=neg_id).first()
+    if not self_cache or not self_cache.lat:
+        return jsonify({"ok": False, "msg": "Busque os concorrentes primeiro para obter as coordenadas GPS."})
+
+    clat, clng = self_cache.lat, self_cache.lng
+    total = grid_size ** 2
+    threading.Thread(
+        target=_run_geogrid,
+        args=(neg_id, grid_size, radius_km, clat, clng),
+        daemon=True,
+    ).start()
+    return jsonify({"ok": True, "total": total})
+
+@app.route("/negocio/<int:neg_id>/geogrid/status")
+@login_required
+def geogrid_status(neg_id):
+    job = _grid_jobs.get(neg_id)
+    if not job:
+        # Verifica se já tem resultado salvo
+        gc = GeoGridCache.query.filter_by(neg_id=neg_id).first()
+        if gc:
+            return jsonify({"running": False, "done": gc.grid_size**2,
+                            "total": gc.grid_size**2, "pronto": True})
+        return jsonify({"running": False, "done": 0, "total": 0, "pronto": False})
+    pct = int(job["done"] / job["total"] * 100) if job["total"] else 0
+    return jsonify({**job, "pct": pct, "pronto": not job["running"]})
+
+@app.route("/negocio/<int:neg_id>/geogrid/dados")
+@login_required
+def geogrid_dados(neg_id):
+    gc = GeoGridCache.query.filter_by(neg_id=neg_id).first()
+    if not gc:
+        return jsonify({"ok": False})
+    return jsonify({
+        "ok":         True,
+        "grid_size":  gc.grid_size,
+        "radius_km":  gc.radius_km,
+        "center_lat": gc.center_lat,
+        "center_lng": gc.center_lng,
+        "resultados": json.loads(gc.resultados),
+        "atualizado": gc.atualizado.strftime("%d/%m/%Y %H:%M"),
+    })
 
 # ══════════════════════════════════════
 #  DETALHE DO NEGÓCIO — helpers
@@ -720,6 +865,14 @@ def negocio(neg_id):
             issues.append({"crit":False, "t":f"Poucas avaliações ({ultimo.avaliacoes})","d":"Estratégia de captação pode mudar isso rapidamente."})
     criterios, bons, regs, ruins = _get_criterios(neg, ultimo)
     concorrentes = _get_concorrentes(neg, ultimo)
+    geogrid_obj  = GeoGridCache.query.filter_by(neg_id=neg_id).first()
+    geogrid = None
+    if geogrid_obj:
+        geogrid = {
+            "atualizado": geogrid_obj.atualizado.strftime("%d/%m/%Y %H:%M"),
+            "grid_size":  geogrid_obj.grid_size,
+            "radius_km":  geogrid_obj.radius_km,
+        }
     return render_template("negocio.html",
         neg=neg, ultimo=ultimo, diags=diags,
         chart_labels=json.dumps(chart_labels),
@@ -728,6 +881,7 @@ def negocio(neg_id):
         issues=issues,
         criterios=criterios, bons=bons, regs=regs, ruins=ruins,
         concorrentes=concorrentes,
+        geogrid=geogrid,
     )
 
 # ══════════════════════════════════════
@@ -735,6 +889,12 @@ def negocio(neg_id):
 # ══════════════════════════════════════
 def init_db():
     db.create_all()
+    # Cria tabela geogrid se não existir (compatibilidade com DBs antigos)
+    try:
+        db.session.execute(text("SELECT 1 FROM geo_grid_cache LIMIT 1"))
+    except Exception:
+        db.session.rollback()
+        db.create_all()
     # Migração: adiciona colunas lat/lng se não existirem (para DBs antigos)
     from sqlalchemy import text
     for col in ("lat REAL", "lng REAL"):
