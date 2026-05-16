@@ -28,7 +28,7 @@
       </div>
       <div class="text-right flex-shrink-0">
         {% if ultimo %}
-        <div class="font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}</div>
+        <div class="font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}<span class="text-lg font-normal text-gray-600">/100</span></div>
         <div class="text-xs font-bold tracking-widest uppercase score-lbl-{{ score_class(ultimo.score) }} mt-1">▲ {{ 'BOM' if ultimo.score >= 75 else 'REGULAR' if ultimo.score >= 50 else 'CRÍTICO' }} — Score GMB</div>
         {% else %}
         <div class="text-gray-700 text-sm">Sem dados</div>
@@ -61,8 +61,8 @@
     <!-- Gauge -->
     <div class="card p-5 flex flex-col items-center justify-center" id="gauge-card">
       <canvas id="gaugeChart" width="160" height="100"></canvas>
-      <div id="gauge-print-fallback" class="hidden font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}</div>
-      <div class="text-xs text-gray-600 uppercase tracking-widest mt-2">Score de Saúde</div>
+      <div id="gauge-print-fallback" class="hidden font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}<span class="text-lg font-normal text-gray-600">/100</span></div>
+      <div class="text-xs text-gray-600 uppercase tracking-widest mt-2">Score de Saúde — máx. 100</div>
     </div>
 
     <!-- Avaliação -->
@@ -286,6 +286,7 @@
 
 
 {# ── SEÇÃO 2: POSICIONAMENTO VS CONCORRENTES ── #}
+<div id="card-posicionamento-anchor"></div>
 {% if not concorrentes %}
 <div class="card overflow-hidden mb-5">
   <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
@@ -307,7 +308,7 @@
 {% endif %}
 
 {% if concorrentes and concorrentes|length >= 1 %}
-<div class="card overflow-hidden mb-5">
+<div class="card overflow-hidden mb-5" id="card-posicionamento">
   <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
     <div class="flex items-center gap-2">
       <span class="text-xs font-semibold uppercase tracking-widest text-muted">Posicionamento</span>
@@ -588,6 +589,25 @@ function setCritView(view) {
 
   /* Margem da pagina impressa */
   @page { margin: 1.5cm; size: A4; }
+
+    /* Evita quebra dentro de cards */
+    .card { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+    /* Evita quebra dentro de linhas de tabela */
+    table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+    /* Quebra de página antes do posicionamento */
+    #card-posicionamento { page-break-before: always !important; break-before: page !important; }
+
+    /* Compacta espaçamentos para caber mais em cada página */
+    .px-5 { padding-left: 12px !important; padding-right: 12px !important; }
+    .py-4 { padding-top:  8px !important; padding-bottom:  8px !important; }
+    .py-3 { padding-top:  6px !important; padding-bottom:  6px !important; }
+    .mb-5 { margin-bottom: 10px !important; }
+
+    /* Critérios: fonte menor para caber tudo numa página */
+    #crit-list table { font-size: 10px !important; }
+    #crit-list td, #crit-list th { padding: 5px 10px !important; }
 }
 </style>
 
