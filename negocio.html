@@ -59,8 +59,9 @@
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
 
     <!-- Gauge -->
-    <div class="card p-5 flex flex-col items-center justify-center">
+    <div class="card p-5 flex flex-col items-center justify-center" id="gauge-card">
       <canvas id="gaugeChart" width="160" height="100"></canvas>
+      <div id="gauge-print-fallback" class="hidden font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}</div>
       <div class="text-xs text-gray-600 uppercase tracking-widest mt-2">Score de Saúde</div>
     </div>
 
@@ -118,7 +119,7 @@
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
 
     <!-- Evolução -->
-    <div class="card p-5">
+    <div class="card p-5" id="evolucao-card">
       <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-4">Evolução do Score</div>
       {% if diags|length > 1 %}
       <canvas id="evolChart" height="160"></canvas>
@@ -319,7 +320,7 @@
   </div>
 
   {# Gráfico de barras visual #}
-  <div class="px-5 py-5 border-b border-b1">
+  <div class="px-5 py-5 border-b border-b1" id="bar-chart-concorrentes">
     <div class="flex items-end gap-2 h-28">
       {% for c in concorrentes %}
       {% set h = ((c.score or 0) / 100 * 96)|int %}
@@ -525,6 +526,69 @@ function setCritView(view) {
 <style>
   .score-num-ok{color:#00e676}.score-num-warn{color:#ffab00}.score-num-bad{color:#ff5252}.score-num-idle{color:#444}
   .score-lbl-ok{color:#00e676}.score-lbl-warn{color:#ffab00}.score-lbl-bad{color:#ff5252}
+</style>
+<style>
+@media print {
+  /* Esconde chrome da UI */
+  .no-print, nav, #btn-grid, #btn-list, #btn-concorrentes,
+  #bar-chart-concorrentes, #evolucao-card { display: none !important; }
+
+  /* Esconde canvas — nao imprimem */
+  canvas { display: none !important; }
+
+  /* Mostra fallback de score no gauge */
+  #gauge-print-fallback { display: block !important; }
+
+  /* Fundo branco em tudo */
+  body, .card { background: #fff !important; }
+  body { color: #111 !important; font-size: 12px; }
+
+  /* Bordas visiveis no branco */
+  .card { border: 1px solid #d1d5db !important; border-radius: 8px; margin-bottom: 12px !important; }
+  .border-b, .border-b1 { border-color: #e5e7eb !important; }
+
+  /* Cores de status */
+  .text-ok, .score-num-ok, .score-lbl-ok { color: #16a34a !important; }
+  .text-warn, .score-num-warn, .score-lbl-warn { color: #d97706 !important; }
+  .text-bad, .score-num-bad, .score-lbl-bad { color: #dc2626 !important; }
+  .text-car, .border-car { color: #b45309 !important; }
+  .text-muted, .text-gray-600 { color: #4b5563 !important; }
+  .text-dim, .text-gray-400, .text-gray-500 { color: #9ca3af !important; }
+  .text-text { color: #111 !important; }
+
+  /* Badges checklist */
+  .chk-ok  { background: #f0fdf4 !important; color: #16a34a !important; border: 1px solid #bbf7d0 !important; }
+  .chk-no  { background: #fef2f2 !important; color: #dc2626 !important; border: 1px solid #fecaca !important; }
+  .chk-ver { background: #fffbeb !important; color: #d97706 !important; border: 1px solid #fde68a !important; }
+
+  /* Badges score */
+  .score-ok   { background: #f0fdf4 !important; color: #16a34a !important; }
+  .score-warn { background: #fffbeb !important; color: #d97706 !important; }
+  .score-bad  { background: #fef2f2 !important; color: #dc2626 !important; }
+
+  /* Criterios: lista no print, grade oculta */
+  #crit-grid { display: none !important; }
+  #crit-list { display: block !important; }
+  .bg-ok   { background: #16a34a !important; }
+  .bg-warn { background: #d97706 !important; }
+  .bg-bad  { background: #dc2626 !important; }
+
+  /* Issues */
+  .bg-car\/5 { background: #fffbeb !important; }
+
+  /* Tabelas */
+  table td, table th { color: #111 !important; border-color: #e5e7eb !important; }
+  .bg-car\/5 td { background: #fef3c7 !important; }
+
+  /* Cards nao quebram no meio */
+  .card { break-inside: avoid; page-break-inside: avoid; }
+
+  /* Modal oculto */
+  #modalEditar { display: none !important; }
+
+  /* Margem da pagina impressa */
+  @page { margin: 1.5cm; size: A4; }
+}
 </style>
 
 <script>
