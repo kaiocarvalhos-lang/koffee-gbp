@@ -2,11 +2,14 @@
 {% block title %}{{ neg.nome }} — GBP Analyzer{% if has_map %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
-  // Leaflet está pronto — inicializa os mapas
+  // Leaflet — mapa de concorrentes
   if (typeof initConcorrentesMap === 'function') initConcorrentesMap();
-  if (typeof initGeogridMap     === 'function') initGeogridMap();
 </script>
 {% endif %}
+<script>
+  // Geo-grid: HTML puro, sem Leaflet
+  if (typeof initGeogridMap === 'function') initGeogridMap();
+</script>
 {% endblock %}
 {% block content %}
 <div class="max-w-screen-xl mx-auto px-6 py-6">
@@ -674,7 +677,7 @@ function setCritView(view) {
     {# Mapa ou estado vazio #}
     {% if geogrid %}
     <div class="px-5 py-5">
-      <div id="mapa-geogrid" style="height:360px;border-radius:10px;background:#e8eaed;" class="no-print"></div>
+      <div id="mapa-geogrid" style="min-height:300px;border-radius:10px;background:#111827;" class="no-print"></div>
     <script>
     window._GEOGRID_PTS  = {{ geogrid.resultados | tojson }};
     window._GEOGRID_SIZE = {{ geogrid.grid_size }};
@@ -947,9 +950,12 @@ function fecharEditar(){ document.getElementById('modalEditar').classList.replac
 {% if has_map %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
-  // Leaflet está pronto — inicializa os mapas
+  // Leaflet — mapa de concorrentes
   if (typeof initConcorrentesMap === 'function') initConcorrentesMap();
-  if (typeof initGeogridMap     === 'function') initGeogridMap();
 </script>
 {% endif %}
+<script>
+  // Geo-grid: HTML puro, sem Leaflet
+  if (typeof initGeogridMap === 'function') initGeogridMap();
+</script>
 {% endblock %}
