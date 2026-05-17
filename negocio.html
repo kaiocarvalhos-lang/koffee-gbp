@@ -1,5 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ neg.nome }} — GBP Analyzer{% endblock %}
+{% block title %}{{ neg.nome }} — GBP Analyzer{% if has_map %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="max-w-screen-xl mx-auto px-6 py-6">
 
@@ -502,12 +505,28 @@ function pollGeogrid(total) {
   const el = document.getElementById('mapa-geogrid');
   if (!el) return;
   function tryRender() {
-    if (typeof L === 'undefined') { setTimeout(tryRender, 100); return; }
-
     fetch(`/negocio/${NEG_ID}/geogrid/dados`)
     .then(r => r.json())
     .then(d => {
       if (!d.ok) return;
+
+      // Popula grade estática para impressão
+      const gs   = d.grid_size;
+      const rows = [];
+      for (let row = 0; row < gs; row++) {
+        let cells = '';
+        for (let col = 0; col < gs; col++) {
+          const pt    = d.resultados[row * gs + col];
+          const rank  = pt ? pt.rank : null;
+          const color = !rank ? '#9ca3af' : rank <= 3 ? '#16a34a' : rank <= 7 ? '#ca8a04' : rank <= 10 ? '#ea580c' : '#dc2626';
+          const label = rank ? `${rank}º` : '—';
+          cells += `<span style="display:inline-block;width:36px;height:36px;line-height:36px;text-align:center;background:${color};color:#fff;border-radius:50%;font-size:11px;font-weight:700;margin:2px;">${label}</span>`;
+        }
+        rows.push(`<div>${cells}</div>`);
+      }
+      const el = document.getElementById('geogrid-print-table');
+      if (el) el.innerHTML = rows.join('');
+
       const map = L.map('mapa-geogrid', {zoomControl: true, scrollWheelZoom: false});
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap', maxZoom: 18
@@ -561,8 +580,6 @@ function pollGeogrid(total) {
 
   // Aguarda Leaflet carregar (defer)
   function tryInit() {
-    if (typeof L === 'undefined') { setTimeout(tryInit, 100); return; }
-
     const map = L.map('mapa-concorrentes', { zoomControl: true, scrollWheelZoom: false });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -668,7 +685,12 @@ function setCritView(view) {
     {# Mapa ou estado vazio #}
     {% if geogrid %}
     <div class="px-5 py-5">
-      <div id="mapa-geogrid" style="height:360px;border-radius:10px;overflow:hidden;"></div>
+      <div id="mapa-geogrid" style="height:360px;border-radius:10px;overflow:hidden;" class="no-print"></div>
+    {# Print fallback: grade estática com os números de ranking #}
+    <div id="geogrid-print" class="hidden">
+      <p class="text-xs text-muted mb-3">Geo-Grid {{ geogrid.grid_size }}×{{ geogrid.grid_size }} · Raio {{ geogrid.radius_km }} km · {{ geogrid.atualizado }}</p>
+      <div id="geogrid-print-table" style="font-family:monospace;line-height:1.8;"></div>
+    </div>
       <div class="flex items-center gap-4 mt-3 flex-wrap">
         <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full" style="background:#22c55e"></div><span class="text-xs text-muted">1º – 3º lugar</span></div>
         <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full" style="background:#eab308"></div><span class="text-xs text-muted">4º – 7º lugar</span></div>
@@ -751,12 +773,12 @@ function setCritView(view) {
 {%- set has_map = (concorrentes and concorrentes|selectattr("lat")|list|length > 0) or geogrid -%}
 {% if has_map %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-<script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 {% endif %}
 <style>
 @media print {
   /* Esconde chrome da UI */
-  .no-print, nav, #btn-grid, #btn-list, #btn-concorrentes, #mapa-concorrentes,
+  .no-print, nav, #btn-grid, #btn-list, #btn-concorrentes,
+  #mapa-concorrentes, #mapa-geogrid, #gg-progress, #geogrid-controls,
   #bar-chart-concorrentes, #evolucao-card { display: none !important; }
 
   /* Esconde canvas — nao imprimem */
@@ -764,6 +786,8 @@ function setCritView(view) {
 
   /* Mostra fallback de score no gauge */
   #gauge-print-fallback { display: block !important; }
+  /* Mostra grade estática do geo-grid no print */
+  #geogrid-print { display: block !important; }
 
   /* Fundo branco em tudo */
   body, .card { background: #fff !important; }
@@ -912,4 +936,7 @@ function analisarUm(negId) {
 function abrirEditar(){ document.getElementById('modalEditar').classList.replace('hidden','flex'); }
 function fecharEditar(){ document.getElementById('modalEditar').classList.replace('flex','hidden'); }
 </script>
+{% if has_map %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+{% endif %}
 {% endblock %}
