@@ -500,6 +500,23 @@ def buscar_concorrentes_route(neg_id):
 # ══════════════════════════════════════
 import math as _math
 
+
+def _geocode_cidade(cidade):
+    """Geocodifica a cidade via Nominatim (OpenStreetMap, gratuito, sem API key)."""
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": f"{cidade}, Brasil", "format": "json", "limit": 1},
+            headers={"User-Agent": "KoffeeGBPAnalyzer/1.0 (koffeemarketing.com.br)"},
+            timeout=6,
+        )
+        data = r.json()
+        if data:
+            return float(data[0]["lat"]), float(data[0]["lon"])
+    except Exception:
+        pass
+    return None, None
+
 def _grid_points(clat, clng, grid_size, radius_km):
     """Gera os N×N pontos do geo-grid ao redor do centro."""
     half  = grid_size // 2
@@ -581,16 +598,19 @@ def gerar_geogrid(neg_id):
     radius_km = float((request.get_json() or {}).get("radius_km", 1.0))
     grid_size = max(3, min(7, grid_size))  # limita entre 3 e 7
 
-    # Precisa de coordenadas — tenta self primeiro, depois qualquer concorrente
-    self_cache  = ConcorrenteCache.query.filter_by(neg_id=neg_id, is_self=True).first()
-    any_coords  = ConcorrenteCache.query.filter_by(neg_id=neg_id)                    .filter(ConcorrenteCache.lat.isnot(None)).first()
+    # Coordenadas: tenta self → qualquer concorrente → geocodifica a cidade
+    self_cache = ConcorrenteCache.query.filter_by(neg_id=neg_id, is_self=True).first()
+    any_coords = ConcorrenteCache.query.filter_by(neg_id=neg_id)                    .filter(ConcorrenteCache.lat.isnot(None)).first()
 
     if self_cache and self_cache.lat:
         clat, clng = self_cache.lat, self_cache.lng
     elif any_coords:
-        clat, clng = any_coords.lat, any_coords.lng   # usa vizinho mais próximo como centro
+        clat, clng = any_coords.lat, any_coords.lng
     else:
-        return jsonify({"ok": False, "msg": "Clique em 'Atualizar do Google' para buscar as coordenadas GPS dos concorrentes."})
+        # Geocodifica a cidade via Nominatim (sem créditos, sem API key)
+        clat, clng = _geocode_cidade(neg.cidade)
+        if not clat:
+            return jsonify({"ok": False, "msg": f"Não foi possível localizar '{neg.cidade}'. Verifique o nome da cidade do negócio."})
     total = grid_size ** 2
     threading.Thread(
         target=_run_geogrid,
