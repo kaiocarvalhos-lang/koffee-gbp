@@ -581,14 +581,16 @@ def gerar_geogrid(neg_id):
     radius_km = float((request.get_json() or {}).get("radius_km", 1.0))
     grid_size = max(3, min(7, grid_size))  # limita entre 3 e 7
 
-    # Precisa de coordenadas do negócio
-    self_cache = ConcorrenteCache.query.filter_by(neg_id=neg_id, is_self=True).first()
-    if not self_cache:
-        self_cache = ConcorrenteCache.query.filter_by(neg_id=neg_id).first()
-    if not self_cache or not self_cache.lat:
-        return jsonify({"ok": False, "msg": "Busque os concorrentes primeiro para obter as coordenadas GPS."})
+    # Precisa de coordenadas — tenta self primeiro, depois qualquer concorrente
+    self_cache  = ConcorrenteCache.query.filter_by(neg_id=neg_id, is_self=True).first()
+    any_coords  = ConcorrenteCache.query.filter_by(neg_id=neg_id)                    .filter(ConcorrenteCache.lat.isnot(None)).first()
 
-    clat, clng = self_cache.lat, self_cache.lng
+    if self_cache and self_cache.lat:
+        clat, clng = self_cache.lat, self_cache.lng
+    elif any_coords:
+        clat, clng = any_coords.lat, any_coords.lng   # usa vizinho mais próximo como centro
+    else:
+        return jsonify({"ok": False, "msg": "Clique em 'Atualizar do Google' para buscar as coordenadas GPS dos concorrentes."})
     total = grid_size ** 2
     threading.Thread(
         target=_run_geogrid,
