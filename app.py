@@ -2,6 +2,7 @@ import os, json, threading, time, csv, io
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
+from sqlalchemy.orm import joinedload
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
@@ -236,6 +237,11 @@ def login_required(f):
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
+
+@app.route("/ping")
+def ping():
+    """Endpoint para UptimeRobot manter o app acordado."""
+    return "ok", 200
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -842,7 +848,7 @@ def _get_concorrentes(neg, ultimo):
 @app.route("/negocio/<int:neg_id>")
 @login_required
 def negocio(neg_id):
-    neg    = Negocio.query.get_or_404(neg_id)
+    neg    = Negocio.query.options(joinedload(Negocio.diagnosticos)).get_or_404(neg_id)
     diags  = neg.diagnosticos
     ultimo = diags[0] if diags else None
     historico    = list(reversed(diags[:10]))
