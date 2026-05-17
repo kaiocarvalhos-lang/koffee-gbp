@@ -509,65 +509,7 @@ function pollGeogrid(total) {
 }
 
 // Geo-Grid map — chamado após Leaflet carregar
-function initGeogridMap() {
-  var el  = document.getElementById('mapa-geogrid');
-  var pts = window._GEOGRID_PTS;
-  if (!el || !pts || !pts.length) { return; }
-
-  var gs   = window._GEOGRID_SIZE || 5;
-  var size = gs <= 3 ? 56 : gs <= 5 ? 46 : 38;
-  var gap  = gs <= 3 ? 6  : gs <= 5 ? 5  : 4;
-  var fsz  = gs <= 3 ? 15 : gs <= 5 ? 13 : 11;
-
-  var rows = '';
-  for (var r = 0; r < gs; r++) {
-    rows += '<div style="display:flex;gap:' + gap + 'px;justify-content:center;">';
-    for (var c = 0; c < gs; c++) {
-      var pt    = pts[r * gs + c];
-      var rank  = pt ? pt.rank : null;
-      var color = !rank       ? '#6b7280'
-                : rank <= 3  ? '#22c55e'
-                : rank <= 7  ? '#eab308'
-                : rank <= 10 ? '#f97316'
-                :               '#ef4444';
-      var label = rank ? (rank + 'º') : '—';
-      rows += '<div title="' + (rank ? rank+'º lugar' : 'Não encontrado') + '"'
-            + ' style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;'
-            + 'background:' + color + ';color:#fff;display:flex;align-items:center;'
-            + 'justify-content:center;font-size:' + fsz + 'px;font-weight:700;'
-            + 'cursor:help;flex-shrink:0;box-shadow:0 2px 4px rgba(0,0,0,0.3);">'
-            + label + '</div>';
-    }
-    rows += '</div>';
-  }
-
-  el.innerHTML = '<div style="display:flex;flex-direction:column;gap:' + gap + 'px;'
-               + 'align-items:center;justify-content:center;height:100%;padding:20px;">'
-               + rows + '</div>';
-  el.style.background    = '#111827';
-  el.style.borderRadius  = '10px';
-  el.style.minHeight     = '260px';
-
-  // Grade para impressão
-  var printEl = document.getElementById('geogrid-print-table');
-  if (printEl) {
-    var prows = '';
-    for (var pr = 0; pr < gs; pr++) {
-      prows += '<div>';
-      for (var pc = 0; pc < gs; pc++) {
-        var ppt = pts[pr * gs + pc];
-        var prk = ppt ? ppt.rank : null;
-        var pbg = !prk ? '#9ca3af' : prk<=3 ? '#16a34a' : prk<=7 ? '#ca8a04' : prk<=10 ? '#ea580c' : '#dc2626';
-        prows += '<span style="display:inline-block;width:34px;height:34px;line-height:34px;'
-               + 'text-align:center;background:' + pbg + ';color:#fff;border-radius:50%;'
-               + 'font-size:11px;font-weight:700;margin:2px;">'
-               + (prk ? prk+'º' : '—') + '</span>';
-      }
-      prows += '</div>';
-    }
-    printEl.innerHTML = prows;
-  }
-}
+function initGeogridMap() { /* grade renderizada no servidor */ }
 
 
 // ── Mapa de concorrentes (Leaflet + OpenStreetMap) ──────────────────────
@@ -686,11 +628,26 @@ function setCritView(view) {
     {# Mapa ou estado vazio #}
     {% if geogrid %}
     <div class="px-5 py-5">
-      <div id="mapa-geogrid" style="min-height:300px;border-radius:10px;background:#111827;" class="no-print"></div>
-    <script>
-    window._GEOGRID_PTS  = {{ geogrid.resultados | tojson }};
-    window._GEOGRID_SIZE = {{ geogrid.grid_size }};
-    </script>
+      {# Grade geo-grid — renderizada no servidor, sem JavaScript #}
+    {%- set gs = geogrid.grid_size -%}
+    {%- set sz = 56 if gs <= 3 else 46 if gs <= 5 else 38 -%}
+    {%- set gp = 6 if gs <= 3 else 5 if gs <= 5 else 4 -%}
+    {%- set fz = 15 if gs <= 3 else 13 if gs <= 5 else 11 -%}
+    <div class="no-print" style="display:flex;flex-direction:column;gap:{{ gp }}px;align-items:center;justify-content:center;padding:20px;background:#111827;border-radius:10px;min-height:260px;">
+      {% for row in range(gs) %}
+      <div style="display:flex;gap:{{ gp }}px;">
+        {% for col in range(gs) %}
+        {%- set idx = row * gs + col -%}
+        {%- set pt = geogrid.resultados[idx] if idx < geogrid.resultados|length else none -%}
+        {%- set rank = pt.rank if pt and pt.rank else none -%}
+        {%- set color = '#22c55e' if rank and rank <= 3 else '#eab308' if rank and rank <= 7 else '#f97316' if rank and rank <= 10 else '#ef4444' if rank else '#6b7280' -%}
+        <div title="{{ rank }}º lugar" style="width:{{ sz }}px;height:{{ sz }}px;border-radius:50%;background:{{ color }};color:#fff;display:flex;align-items:center;justify-content:center;font-size:{{ fz }}px;font-weight:700;flex-shrink:0;box-shadow:0 2px 4px rgba(0,0,0,0.25);">
+          {{ rank if rank else '—' }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
     {# Print fallback: grade estática com os números de ranking #}
     <div id="geogrid-print" class="hidden">
       <p class="text-xs text-muted mb-3">Geo-Grid {{ geogrid.grid_size }}×{{ geogrid.grid_size }} · Raio {{ geogrid.radius_km }} km · {{ geogrid.atualizado }}</p>
