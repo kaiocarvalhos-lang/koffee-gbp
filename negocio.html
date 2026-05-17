@@ -462,7 +462,6 @@ function gerarGeogrid() {
   if (!confirm(`Isso vai consumir ${creditos} créditos SerpAPI. Confirmar?`)) return;
 
   document.getElementById('btn-geogrid').disabled = true;
-  document.getElementById('gg-progress').classList.remove('hidden');
   document.getElementById('gg-count').textContent = `0 / ${creditos}`;
 
   fetch(`/negocio/${NEG_ID}/geogrid`, {
@@ -475,9 +474,10 @@ function gerarGeogrid() {
     if (!d.ok) {
       alert(d.msg);
       document.getElementById('btn-geogrid').disabled = false;
-      document.getElementById('gg-progress').classList.add('hidden');
       return;
     }
+    // Só mostra progresso depois de confirmar que o job iniciou
+    document.getElementById('gg-progress').classList.remove('hidden');
     pollGeogrid(d.total);
   });
 }
