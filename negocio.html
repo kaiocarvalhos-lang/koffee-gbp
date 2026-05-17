@@ -46,7 +46,7 @@
     {% endif %}
 
     <div class="flex gap-2 mt-4 no-print flex-wrap">
-      <button onclick="analisarAgora()" class="btn-car px-4 py-2 rounded-lg text-xs tracking-wider uppercase">↺ Reanalisar agora</button>
+      <button onclick="analisarAgora()" class="btn-car px-4 py-2 rounded-lg text-xs tracking-wider uppercase" onclick="analisarAgora()">↺ Reanalisar agora</button>
       <button onclick="abrirEditar()" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">✏ Editar</button>
       <button onclick="window.print()" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">🖨 Imprimir</button>
       <a href="{{ url_for('dashboard') }}" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">← Voltar</a>
@@ -455,8 +455,6 @@
 <script>
 
 // ── Geo-Grid ──────────────────────────────────────────────────────────
-const NEG_ID = {{ neg.id }};
-
 function gerarGeogrid() {
   const size   = document.getElementById('gg-size').value;
   const radius = document.getElementById('gg-radius').value;
@@ -896,6 +894,21 @@ function analisarAgora(){
     if(d.ok) location.reload(); else{btn.textContent='✗ Erro';btn.disabled=false;alert(d.msg);}
   });
 }
+
+function analisarUm(negId) {
+  const btn = document.getElementById('btn-analisar-' + negId);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  fetch(`/analisar/${negId}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) location.reload();
+      else {
+        alert('Erro: ' + (d.msg || 'Tente novamente'));
+        if (btn) { btn.disabled = false; btn.textContent = '↺'; }
+      }
+    });
+}
+
 function abrirEditar(){ document.getElementById('modalEditar').classList.replace('hidden','flex'); }
 function fecharEditar(){ document.getElementById('modalEditar').classList.replace('flex','hidden'); }
 </script>
