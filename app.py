@@ -1,959 +1,955 @@
-import os, json, threading, time, csv, io
-from datetime import datetime
-from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
-from sqlalchemy.orm import joinedload
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
-import requests
-from flask_compress import Compress
+{% extends "base.html" %}
+{% block title %}{{ neg.nome }} — GBP Analyzer{% if has_map %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+  // Leaflet está pronto — inicializa os mapas
+  if (typeof initConcorrentesMap === 'function') initConcorrentesMap();
+  if (typeof initGeogridMap     === 'function') initGeogridMap();
+</script>
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="max-w-screen-xl mx-auto px-6 py-6">
 
-# ══════════════════════════════════════
-#  APP & DB
-# ══════════════════════════════════════
-app = Flask(__name__, template_folder='.')
-app.secret_key = os.environ.get("SECRET_KEY", "gbp-analyzer-secret-2025")
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-_db_url = os.environ.get("DATABASE_URL", "")
-if _db_url.startswith("postgres://"):
-    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
-app.config["SQLALCHEMY_DATABASE_URI"] = _db_url or "sqlite:///" + os.path.join(BASE_DIR, "gbp_analyzer.db")
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["COMPRESS_MIMETYPES"] = [
-    "text/html", "text/css", "application/javascript",
-    "application/json", "text/plain"
-]
-app.config["COMPRESS_LEVEL"] = 6   # 1-9, balanço velocidade/compressão
-app.config["COMPRESS_MIN_SIZE"] = 500  # só comprime > 500 bytes
-db = SQLAlchemy(app)
-Compress(app)   # gzip automático em todas as respostas
+  <div class="flex items-center gap-2 text-xs text-gray-600 mb-5 no-print">
+    <a href="{{ url_for('dashboard') }}" class="hover:text-car">Dashboard</a>
+    <span>›</span>
+    <a href="{{ url_for('dashboard', cat=neg.categoria) }}" class="hover:text-car">{{ neg.categoria }}</a>
+    <span>›</span>
+    <span class="text-gray-400">{{ neg.nome }}</span>
+  </div>
 
-SKEY = os.environ.get("SERP_API_KEY", "")  # chave configurada no Render > Environment
+  <!-- HEADER -->
+  <div class="card p-6 mb-5">
+    <div class="flex justify-between items-start gap-6 flex-wrap">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="inline-block text-xs font-bold tracking-widest uppercase text-bad border border-bad/30 bg-bad/8 px-2 py-0.5 rounded">🔴 Google Meu Negócio</span>
+          <span class="text-xs px-2 py-0.5 rounded bg-b1 text-gray-500 border border-b2">{{ neg.categoria }}</span>
+        </div>
+        <h1 class="font-syne font-extrabold text-2xl md:text-3xl uppercase mb-2 truncate">{{ (ultimo.titulo_gmb or neg.nome)|upper }}</h1>
+        <div class="flex flex-wrap gap-3 text-xs text-gray-600">
+          <span>▶ {{ neg.cidade }}</span>
+          {% if ultimo and ultimo.telefone %}<span>▶ {{ ultimo.telefone }}</span>{% endif %}
+          {% if ultimo and ultimo.open_state %}<span class="text-ok">▶ {{ ultimo.open_state }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        {% if ultimo %}
+        <div class="font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}<span class="text-lg font-normal text-gray-600">/100</span></div>
+        <div class="text-xs font-bold tracking-widest uppercase score-lbl-{{ score_class(ultimo.score) }} mt-1">▲ {{ 'BOM' if ultimo.score >= 75 else 'REGULAR' if ultimo.score >= 50 else 'CRÍTICO' }} — Score GMB</div>
+        {% else %}
+        <div class="text-gray-700 text-sm">Sem dados</div>
+        {% endif %}
+      </div>
+    </div>
 
-# ══════════════════════════════════════
-#  MODELS
-# ══════════════════════════════════════
-class User(db.Model):
-    id     = db.Column(db.Integer, primary_key=True)
-    nome   = db.Column(db.String(100), nullable=False)
-    email  = db.Column(db.String(120), unique=True, nullable=False)
-    senha  = db.Column(db.String(200), nullable=False)
-    criado = db.Column(db.DateTime, default=datetime.utcnow)
+    {% if issues %}
+    <div class="mt-4 border-l-4 border-car bg-car/5 px-4 py-3 rounded-r-lg text-sm text-gray-400">
+      {% set crits = issues|selectattr('crit')|list %}
+      {% if crits|length >= 2 %}<strong class="text-car">Múltiplos problemas críticos:</strong> {{ crits[0].t|lower }} e {{ crits[1].t|lower }} — alta oportunidade de prospecção.
+      {% elif crits %}<strong class="text-car">Ponto crítico:</strong> {{ crits[0].t|lower }}. Ação imediata pode gerar resultado rápido.
+      {% else %}<strong class="text-car">Perfil em boa forma.</strong> Foco em crescimento de avaliações.{% endif %}
+    </div>
+    {% endif %}
 
-class Negocio(db.Model):
-    id           = db.Column(db.Integer, primary_key=True)
-    nome         = db.Column(db.String(200), nullable=False)
-    categoria    = db.Column(db.String(100), default="Geral")
-    cidade       = db.Column(db.String(100), default="Brasília")
-    wa           = db.Column(db.String(50), default="")
-    cid          = db.Column(db.String(30), default="")
-    r_base       = db.Column(db.Float, default=0.0)
-    a_base       = db.Column(db.Integer, default=0)
-    ativo        = db.Column(db.Boolean, default=True)
-    criado       = db.Column(db.DateTime, default=datetime.utcnow)
-    diagnosticos = db.relationship("Diagnostico", backref="negocio", lazy=True,
-                                   order_by="Diagnostico.data.desc()", cascade="all, delete-orphan")
+    <div class="flex gap-2 mt-4 no-print flex-wrap">
+      <button onclick="analisarAgora()" class="btn-car px-4 py-2 rounded-lg text-xs tracking-wider uppercase" onclick="analisarAgora()">↺ Reanalisar agora</button>
+      <button onclick="abrirEditar()" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">✏ Editar</button>
+      <button onclick="window.print()" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">🖨 Imprimir</button>
+      <a href="{{ url_for('dashboard') }}" class="btn-out px-4 py-2 rounded-lg text-xs tracking-wider uppercase">← Voltar</a>
+    </div>
+  </div>
 
-class Diagnostico(db.Model):
-    id         = db.Column(db.Integer, primary_key=True)
-    neg_id     = db.Column(db.Integer, db.ForeignKey("negocio.id"), nullable=False)
-    data       = db.Column(db.DateTime, default=datetime.utcnow)
-    score      = db.Column(db.Integer, default=0)
-    nota       = db.Column(db.Float, default=0.0)
-    avaliacoes = db.Column(db.Integer, default=0)
-    site_ok    = db.Column(db.Boolean, default=False)
-    wa_ok      = db.Column(db.Boolean, default=False)
-    hrs_ok     = db.Column(db.Boolean, default=False)
-    desc_ok    = db.Column(db.Boolean, default=False)
-    foto_ok    = db.Column(db.Boolean, default=False)
-    preco      = db.Column(db.String(20), default="")
-    open_state = db.Column(db.String(100), default="")
-    website    = db.Column(db.String(300), default="")
-    telefone   = db.Column(db.String(50), default="")
-    descricao  = db.Column(db.Text, default="")
-    titulo_gmb = db.Column(db.String(200), default="")
-    raw_json   = db.Column(db.Text, default="")
+  {% if ultimo %}
 
-class JobStatus(db.Model):
-    id         = db.Column(db.Integer, primary_key=True)
-    rodando    = db.Column(db.Boolean, default=False)
-    total      = db.Column(db.Integer, default=0)
-    feitos     = db.Column(db.Integer, default=0)
-    atual      = db.Column(db.String(200), default="")
-    iniciado   = db.Column(db.DateTime)
-    finalizado = db.Column(db.DateTime)
-    erros      = db.Column(db.Integer, default=0)
+  <!-- GRADE 3 COLUNAS: gauge + avaliações + checklist -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
 
-class GeoGridCache(db.Model):
-    """Resultados do geo-grid de posicionamento local."""
-    id         = db.Column(db.Integer, primary_key=True)
-    neg_id     = db.Column(db.Integer, db.ForeignKey("negocio.id"), nullable=False)
-    atualizado = db.Column(db.DateTime, default=datetime.utcnow)
-    grid_size  = db.Column(db.Integer, default=5)
-    radius_km  = db.Column(db.Float,   default=1.0)
-    center_lat = db.Column(db.Float)
-    center_lng = db.Column(db.Float)
-    resultados = db.Column(db.Text, default="[]")  # JSON: [{lat,lng,rank}]
+    <!-- Gauge -->
+    <div class="card p-5 flex flex-col items-center justify-center" id="gauge-card">
+      <canvas id="gaugeChart" width="160" height="100"></canvas>
+      <div id="gauge-print-fallback" class="hidden font-syne font-extrabold text-5xl score-num-{{ score_class(ultimo.score) }}">{{ ultimo.score }}<span class="text-lg font-normal text-gray-600">/100</span></div>
+      <div class="text-xs text-gray-600 uppercase tracking-widest mt-2">Score de Saúde — máx. 100</div>
+    </div>
 
-class ConcorrenteCache(db.Model):
-    """Concorrentes reais buscados no Google via SerpAPI."""
-    id         = db.Column(db.Integer, primary_key=True)
-    neg_id     = db.Column(db.Integer, db.ForeignKey("negocio.id"), nullable=False)
-    atualizado = db.Column(db.DateTime, default=datetime.utcnow)
-    nome       = db.Column(db.String(200), default="")
-    endereco   = db.Column(db.String(300), default="")
-    nota       = db.Column(db.Float, default=0.0)
-    avaliacoes = db.Column(db.Integer, default=0)
-    score      = db.Column(db.Integer, default=0)
-    is_self    = db.Column(db.Boolean, default=False)
-    pos        = db.Column(db.Integer, default=0)
-    gap        = db.Column(db.Integer, default=0)
-    lat        = db.Column(db.Float, default=None)
-    lng        = db.Column(db.Float, default=None)
+    <!-- Avaliação -->
+    <div class="card p-5">
+      <div class="flex items-end gap-3 mb-4">
+        <div class="font-syne font-extrabold text-4xl text-warn">{{ ultimo.nota }}★</div>
+        <div>
+          <div class="text-warn text-lg">{{ '★' * (ultimo.nota|round|int) }}{{ '☆' * (5 - ultimo.nota|round|int) }}</div>
+          <div class="text-xs text-gray-600">{{ "{:,}".format(ultimo.avaliacoes) }} avaliações</div>
+        </div>
+      </div>
+      {% set n = ultimo.nota %}
+      {% set s5 = [[((n-3)*78)|round|int, 0]|max, 100]|min %}
+      {% set s1 = [[((5-n)*18)|round|int, 0]|max, 100]|min %}
+      {% set s2 = [[((5-n)*11)|round|int, 0]|max, 100]|min %}
+      {% set s3 = [[((5-n)*7)|round|int,  0]|max, 100]|min %}
+      {% set s4 = [[100-s5-s3-s2-s1, 0]|max, 100]|min %}
+      {% for star, pct in [('5',s5),('4',s4),('3',s3),('2',s2),('1',s1)] %}
+      <div class="flex items-center gap-2 mb-1">
+        <span class="font-mono text-xs text-gray-600 w-4 text-right">{{ star }}★</span>
+        <div class="flex-1 h-1.5 bg-b1 rounded overflow-hidden"><div class="h-full bg-warn rounded" style="width:{{ pct }}%"></div></div>
+        <span class="font-mono text-xs text-gray-700 w-8 text-right">{{ (ultimo.avaliacoes * pct / 100)|int }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Checklist -->
+    <div class="card p-5">
+      <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">Status do Perfil</div>
+      {% macro chk(ok, lbl) %}
+      <div class="flex items-center justify-between py-1.5 border-b border-b1/50 last:border-0">
+        <span class="text-sm">{{ lbl }}</span>
+        <span class="chk-{{ 'ok' if ok else 'no' }} text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase">{{ 'SIM' if ok else 'NÃO' }}</span>
+      </div>
+      {% endmacro %}
+      {{ chk(ultimo.foto_ok,  'Foto no perfil') }}
+      <div class="flex items-center justify-between py-1.5 border-b border-b1/50">
+        <span class="text-sm">Responde reviews</span>
+        <span class="chk-ver text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase">Verificar</span>
+      </div>
+      {{ chk(ultimo.hrs_ok,   'Horário atualizado') }}
+      <div class="flex items-center justify-between py-1.5 border-b border-b1/50">
+        <span class="text-sm">Posts no GMB</span>
+        <span class="chk-ver text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase">Verificar</span>
+      </div>
+      {{ chk(ultimo.desc_ok,  'Descrição') }}
+      {{ chk(ultimo.site_ok,  'Link do site') }}
+      {{ chk(ultimo.preco,    'Preço cadastrado') }}
+      {{ chk(ultimo.wa_ok,    'WhatsApp') }}
+    </div>
+  </div>
+
+  <!-- GRADE 2 COLUNAS: evolução + info/problemas -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+
+    <!-- Evolução -->
+    <div class="card p-5" id="evolucao-card">
+      <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-4">Evolução do Score</div>
+      {% if diags|length > 1 %}
+      <canvas id="evolChart" height="160"></canvas>
+      {% else %}
+      <div class="text-sm text-gray-600 italic py-8 text-center">Execute mais análises para ver a evolução ao longo do tempo.</div>
+      {% endif %}
+    </div>
+
+    <!-- Info + Problemas -->
+    <div class="card p-5">
+      <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">Informações do Perfil</div>
+      {% if ultimo.website %}<div class="mb-3"><div class="text-xs text-gray-600 uppercase tracking-wider mb-1">Site</div><div class="text-sm text-gray-400 break-all">{{ ultimo.website|replace('https://','') }}</div></div>{% endif %}
+      {% if ultimo.descricao %}<div class="mb-3"><div class="text-xs text-gray-600 uppercase tracking-wider mb-1">Descrição</div><div class="text-xs text-gray-500 leading-relaxed">{{ ultimo.descricao[:150] }}…</div></div>{% endif %}
+      {% if issues %}
+      <div class="mt-4">
+        <div class="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-2">Problemas Identificados</div>
+        {% for iss in issues %}
+        <div class="flex gap-3 items-start bg-esp p-3 rounded-lg border border-b1 mb-2 last:mb-0">
+          <span class="text-sm mt-0.5">{{ '⚠' if iss.crit else '!' }}</span>
+          <div>
+            <div class="text-xs font-semibold {{ 'text-bad' if iss.crit else 'text-warn' }}">{{ iss.t }}</div>
+            <div class="text-xs text-gray-600 mt-0.5 leading-relaxed">{{ iss.d }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SEÇÕES NOVAS: 20 CRITÉRIOS + POSICIONAMENTO
+       (posição correta: após a grade 2-col, antes do histórico)
+  ══════════════════════════════════════════════════════════ -->
+{# ── SEÇÃO 1: 20 CRITÉRIOS ── #}
+{% if criterios %}
+<div class="card overflow-hidden mb-5">
+
+  {# Cabeçalho #}
+  <div class="px-5 py-4 border-b border-b1 flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-semibold uppercase tracking-widest text-muted">Diagnóstico</span>
+      <span class="text-xs text-dim">— 20 critérios avaliados</span>
+    </div>
+    {# Botões de visualização #}
+    <div class="flex items-center gap-1.5 no-print">
+      <button onclick="setCritView('grid')" id="btn-grid"
+        class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all bg-s3 border-b3 text-text"
+        title="Visualização em grade">
+        ⊞ Grade
+      </button>
+      <button onclick="setCritView('list')" id="btn-list"
+        class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all border-b1 text-muted hover:text-text hover:border-b2"
+        title="Visualização em lista">
+        ☰ Lista
+      </button>
+    </div>
+  </div>
+
+  {# Resumo: 3 pills + barra #}
+  <div class="px-5 py-4 border-b border-b1 flex items-center gap-6 flex-wrap">
+    <div class="flex items-center gap-5">
+      <div class="text-center">
+        <div class="font-syne font-extrabold text-3xl text-ok">{{ bons }}</div>
+        <div class="text-xs text-muted uppercase tracking-wider mt-0.5">Bons</div>
+      </div>
+      <div class="w-px h-10 bg-b2"></div>
+      <div class="text-center">
+        <div class="font-syne font-extrabold text-3xl text-warn">{{ regs }}</div>
+        <div class="text-xs text-muted uppercase tracking-wider mt-0.5">Verificar</div>
+      </div>
+      <div class="w-px h-10 bg-b2"></div>
+      <div class="text-center">
+        <div class="font-syne font-extrabold text-3xl text-bad">{{ ruins }}</div>
+        <div class="text-xs text-muted uppercase tracking-wider mt-0.5">Ruins</div>
+      </div>
+    </div>
+    <div class="flex-1 min-w-40">
+      <div class="flex h-2 rounded-full overflow-hidden gap-0.5 mb-1.5">
+        <div class="bg-ok rounded-full transition-all"           style="width:{{ (bons  / 20 * 100)|int }}%"></div>
+        <div class="bg-warn rounded-full transition-all"         style="width:{{ (regs  / 20 * 100)|int }}%"></div>
+        <div class="bg-bad rounded-full transition-all"          style="width:{{ (ruins / 20 * 100)|int }}%"></div>
+      </div>
+      <div class="flex gap-4 text-xs text-muted">
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-ok"></span>{{ (bons/20*100)|int }}% bons</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-warn"></span>{{ (regs/20*100)|int }}% verificar</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-bad"></span>{{ (ruins/20*100)|int }}% ruins</span>
+      </div>
+    </div>
+  </div>
+
+  {# ── GRADE VIEW (padrão para apresentar) ── #}
+  <div id="crit-grid" class="p-5">
+    {% set grupos = criterios | groupby('g') %}
+    {% for grupo, items in grupos %}
+    <div class="mb-5 last:mb-0">
+      <div class="text-xs font-semibold uppercase tracking-widest text-dim mb-3 flex items-center gap-2">
+        <span class="inline-block w-4 h-px bg-b2"></span>
+        {{ grupo }}
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+        {% for c in items %}
+        <div class="rounded-xl p-3 border flex flex-col gap-2 group cursor-default
+          {% if c.s == 'ok' %}bg-ok-dim border-ok/20
+          {% elif c.s == 'warn' %}bg-warn-dim border-warn/20
+          {% else %}bg-bad-dim border-bad/20{% endif %}"
+          title="{{ c.i }}">
+          <div class="flex items-center justify-between">
+            <span class="text-base leading-none
+              {% if c.s == 'ok' %}text-ok{% elif c.s == 'warn' %}text-warn{% else %}text-bad{% endif %}">
+              {% if c.s == 'ok' %}✓{% elif c.s == 'warn' %}?{% else %}✗{% endif %}
+            </span>
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded tracking-wider uppercase
+              {% if c.s == 'ok' %}chk-ok{% elif c.s == 'warn' %}chk-ver{% else %}chk-no{% endif %}">
+              {% if c.s == 'ok' %}BOM{% elif c.s == 'warn' %}VER{% else %}RUIM{% endif %}
+            </span>
+          </div>
+          <div class="text-xs font-medium text-text/80 leading-snug">{{ c.n }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ── LISTA VIEW (para detalhar com o cliente) ── #}
+  <div id="crit-list" class="hidden">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="border-b border-b1">
+          <th class="px-5 py-3 text-left text-muted uppercase tracking-wider" style="width:32px"></th>
+          <th class="px-5 py-3 text-left text-muted uppercase tracking-wider">Critério</th>
+          <th class="px-5 py-3 text-left text-muted uppercase tracking-wider hidden md:table-cell">Grupo</th>
+          <th class="px-5 py-3 text-left text-muted uppercase tracking-wider hidden md:table-cell">Detalhe</th>
+          <th class="px-5 py-3 text-center text-muted uppercase tracking-wider" style="width:80px">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in criterios %}
+        <tr class="border-b border-b1/50 last:border-0
+          {% if c.s == 'bad' %}hover:bg-bad/4{% elif c.s == 'warn' %}hover:bg-warn/4{% else %}hover:bg-ok/4{% endif %}">
+          <td class="px-5 py-3 text-base text-center
+            {% if c.s == 'ok' %}text-ok{% elif c.s == 'warn' %}text-warn{% else %}text-bad{% endif %}">
+            {% if c.s == 'ok' %}✓{% elif c.s == 'warn' %}?{% else %}✗{% endif %}
+          </td>
+          <td class="px-5 py-3 font-medium text-text/90">{{ c.n }}</td>
+          <td class="px-5 py-3 text-muted hidden md:table-cell">
+            <span class="px-2 py-0.5 rounded bg-s3 border border-b2 text-dim">{{ c.g }}</span>
+          </td>
+          <td class="px-5 py-3 text-dim hidden md:table-cell">{{ c.i }}</td>
+          <td class="px-5 py-3 text-center">
+            <span class="text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase
+              {% if c.s == 'ok' %}chk-ok{% elif c.s == 'warn' %}chk-ver{% else %}chk-no{% endif %}">
+              {% if c.s == 'ok' %}BOM{% elif c.s == 'warn' %}VERIFICAR{% else %}RUIM{% endif %}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 
-# ══════════════════════════════════════
-#  SERP API
-# ══════════════════════════════════════
-def _serp(params):
-    params.update({"hl": "pt", "gl": "br", "api_key": SKEY})
-    r = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    if "error" in data:
-        raise Exception(data["error"])
-    return data
+{# ── SEÇÃO 2: POSICIONAMENTO VS CONCORRENTES ── #}
+<div id="card-posicionamento-anchor"></div>
+{% if not concorrentes %}
+<div class="card overflow-hidden mb-5">
+  <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-semibold uppercase tracking-widest text-muted">Posicionamento</span>
+      <span class="text-xs text-dim">— vs concorrentes reais do Google</span>
+    </div>
+    <button onclick="buscarConcorrentes()" id="btn-concorrentes"
+      class="no-print px-3 py-1.5 rounded-lg text-xs font-medium border border-b2 text-muted hover:text-car hover:border-car/40 transition-all flex items-center gap-1.5">
+      <span id="icon-conc">↺</span> Buscar concorrentes
+    </button>
+  </div>
+  <div class="px-5 py-10 text-center">
+    <div class="text-2xl mb-3 opacity-20">🔍</div>
+    <div class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Sem dados de concorrentes</div>
+    <div class="text-xs text-dim">Clique em <strong class="text-car">"Buscar concorrentes"</strong> para buscar os negócios similares no Google e ver o ranking real.</div>
+  </div>
+</div>
+{% endif %}
 
-def _normalize(place):
-    hrs = {}
-    for item in (place.get("hours") or []):
-        if isinstance(item, dict) and item.get("day"):
-            hrs[item["day"]] = item.get("hours", "")
-    return {
-        "title":           place.get("title", ""),
-        "rating":          place.get("rating"),
-        "reviews":         place.get("reviews"),
-        "address":         place.get("address", ""),
-        "phone":           place.get("phone", ""),
-        "website":         place.get("website", ""),
-        "open_state":      place.get("open_state", ""),
-        "operating_hours": hrs if hrs else None,
-        "description":     place.get("description", ""),
-        "price":           place.get("price", ""),
-        "thumbnail":       place.get("thumbnail", ""),
-        "data_cid":        place.get("data_cid", ""),
+{% if concorrentes and concorrentes|length >= 1 %}
+<div class="card overflow-hidden mb-5" id="card-posicionamento">
+  <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-semibold uppercase tracking-widest text-muted">Posicionamento</span>
+      <span class="text-xs text-dim">— vs concorrentes reais do Google</span>
+    </div>
+    <button onclick="buscarConcorrentes()" id="btn-concorrentes"
+      class="no-print px-3 py-1.5 rounded-lg text-xs font-medium border border-b2 text-muted hover:text-car hover:border-car/40 transition-all flex items-center gap-1.5">
+      <span id="icon-conc">↺</span> Atualizar do Google
+    </button>
+  </div>
+
+  {# Mapa de concorrentes #}
+  <div class="px-5 pt-5 pb-3 border-b border-b1">
+    <div id="mapa-concorrentes" style="height:260px;border-radius:10px;background:#e8eaed;"></div>
+  </div>
+
+  {# Gráfico de barras visual #}
+  <div class="px-5 py-5 border-b border-b1" id="bar-chart-concorrentes">
+    <div class="flex items-end gap-2 h-28">
+      {% for c in concorrentes %}
+      {% set h = ((c.score or 0) / 100 * 96)|int %}
+      <div class="flex-1 flex flex-col items-center gap-1 min-w-0">
+        <span class="font-mono text-xs font-bold
+          {% if c.is_self %}text-car
+          {% elif c.score and c.score >= 75 %}text-ok
+          {% elif c.score and c.score >= 50 %}text-warn
+          {% elif c.score %}text-bad
+          {% else %}text-dim{% endif %}">
+          {{ c.score if c.score is not none else '—' }}
+        </span>
+        <div class="w-full rounded-t-md transition-all"
+          style="height:{{ h if h > 4 else 4 }}px;
+            background:{% if c.is_self %}#c8893c{% elif c.score and c.score >= 75 %}rgba(34,197,94,.6){% elif c.score and c.score >= 50 %}rgba(245,158,11,.5){% elif c.score %}rgba(239,68,68,.4){% else %}#1a1a1a{% endif %};
+            {% if c.is_self %}outline:2px solid #c8893c;outline-offset:2px;{% endif %}">
+        </div>
+        <div class="text-center w-full overflow-hidden" style="max-width:100%">
+          <div class="text-xs truncate {% if c.is_self %}text-car font-semibold{% else %}text-dim{% endif %}"
+            title="{{ c.nome }}">
+            {{ c.nome.split()[0] }}{% if c.is_self %} ◀{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Tabela de ranking #}
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="border-b border-b1">
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider" style="width:36px">#</th>
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider">Negócio</th>
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider">Cidade</th>
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider">Score GMB</th>
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider">Nota</th>
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider">Avaliações</th>
+          <th class="px-4 py-3 text-left text-muted uppercase tracking-wider hidden md:table-cell">Gap</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in concorrentes %}
+        <tr class="border-b border-b1/50 last:border-0 transition-colors
+          {% if c.is_self %}bg-car/5{% else %}hover:bg-s2/50{% endif %}"
+          {% if not c.is_self %}onclick="window.location='/negocio/{{ c.id }}'" style="cursor:pointer"{% endif %}>
+          {# Posição #}
+          <td class="px-4 py-3">
+            <span class="font-mono font-bold
+              {% if c.pos == 1 %}text-yellow-400{% elif c.pos == 2 %}text-gray-300{% elif c.pos == 3 %}text-amber-600
+              {% elif c.is_self %}text-car{% else %}text-dim{% endif %}">
+              {{ c.pos }}º
+            </span>
+          </td>
+          {# Nome #}
+          <td class="px-4 py-3">
+            <span class="font-medium {% if c.is_self %}text-car{% else %}text-text/80{% endif %}">
+              {{ c.nome }}{% if c.is_self %} <span class="text-xs text-car/60">(você)</span>{% endif %}
+            </span>
+          </td>
+          {# Cidade #}
+          <td class="px-4 py-3 text-muted">{{ c.cidade }}</td>
+          {# Score #}
+          <td class="px-4 py-3">
+            {% if c.score is not none %}
+            <span class="score-{{ 'ok' if c.score >= 75 else 'warn' if c.score >= 50 else 'bad' }} px-2.5 py-1 rounded-lg font-bold font-mono inline-block
+              {% if c.is_self %}ring-1 ring-car/40{% endif %}">
+              {{ c.score }}
+            </span>
+            {% else %}
+            <span class="score-idle px-2.5 py-1 rounded-lg font-mono inline-block">—</span>
+            {% endif %}
+          </td>
+          {# Nota #}
+          <td class="px-4 py-3">
+            <span class="text-warn">{{ c.nota or '—' }}{% if c.nota %}★{% endif %}</span>
+          </td>
+          {# Avaliações #}
+          <td class="px-4 py-3 font-mono text-muted">
+            {{ "{:,}".format(c.avs|int) if c.avs else '—' }}
+          </td>
+          {# Gap vs líder #}
+          <td class="px-4 py-3 hidden md:table-cell">
+            {% if c.gap is not none %}
+              {% if c.gap == 0 %}
+                <span class="text-ok text-xs font-bold">Líder 🥇</span>
+              {% elif c.gap > 0 %}
+                <span class="text-ok text-xs">+{{ c.gap }}</span>
+              {% else %}
+                <span class="text-bad text-xs">{{ c.gap }}</span>
+              {% endif %}
+            {% else %}
+              <span class="text-dim">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Insight automático #}
+  {% set self_pos = concorrentes | selectattr('is_self') | list %}
+  {% if self_pos %}
+  {% set me = self_pos[0] %}
+  <div class="px-5 py-3 border-t border-b1 bg-s2/50">
+    {% if me.pos == 1 %}
+    <p class="text-xs text-ok">🥇 <strong>Você lidera</strong> esta categoria na sua região. Foque em manter o score e aumentar o distanciamento dos concorrentes.</p>
+    {% elif me.pos <= 3 %}
+    <p class="text-xs text-warn">📈 <strong>Você está em {{ me.pos }}º lugar.</strong>
+      {% if me.gap %}Com mais <strong class="text-text">{{ me.gap|abs }} pontos</strong> você assume a liderança.{% endif %}
+    </p>
+    {% else %}
+    <p class="text-xs text-bad">⚠ <strong>Você está em {{ me.pos }}º lugar.</strong>
+      {% if me.gap %}Diferença de <strong class="text-text">{{ me.gap|abs }} pontos</strong> para o líder — priorize as ações críticas acima.{% endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+
+{# ── JS: toggle de visualização dos critérios ── #}
+<script>
+
+// ── Geo-Grid ──────────────────────────────────────────────────────────
+function gerarGeogrid() {
+  const size   = document.getElementById('gg-size').value;
+  const radius = document.getElementById('gg-radius').value;
+  const creditos = size * size;
+  if (!confirm(`Isso vai consumir ${creditos} créditos SerpAPI. Confirmar?`)) return;
+
+  document.getElementById('btn-geogrid').disabled = true;
+  document.getElementById('gg-count').textContent = `0 / ${creditos}`;
+
+  fetch(`/negocio/${NEG_ID}/geogrid`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({grid_size: parseInt(size), radius_km: parseFloat(radius)})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) {
+      alert(d.msg);
+      document.getElementById('btn-geogrid').disabled = false;
+      return;
     }
-
-def buscar_negocio_api(neg):
-    if neg.cid:
-        try:
-            data = _serp({"engine": "google_maps", "type": "place", "data_cid": neg.cid})
-            place = data.get("place_results") or {}
-            if place.get("title"):
-                return _normalize(place), None
-        except Exception:
-            pass
-    queries = [
-        f"{neg.nome} {neg.cidade}",
-        f"{neg.nome} {neg.cidade} {neg.categoria}",
-        " ".join(neg.nome.split()[:3]) + f" {neg.cidade}",
-    ]
-    for q in queries:
-        try:
-            data = _serp({"engine": "google_maps", "type": "search", "q": q})
-            results = data.get("local_results", [])
-            if results:
-                palavras = neg.nome.lower().split()[:2]
-                for res in results[:3]:
-                    titulo = (res.get("title") or "").lower()
-                    if any(p in titulo for p in palavras if len(p) > 3):
-                        return res, None
-                return results[0], None
-        except Exception:
-            continue
-    return None, "Não encontrado"
-
-def calc_score(r, wa):
-    nota = float(r.get("rating") or 0)
-    avs  = int(r.get("reviews") or 0)
-    site = bool(r.get("website")) and "instagram.com" not in str(r.get("website", "")) \
-           and "facebook.com" not in str(r.get("website", ""))
-    hrs  = bool(r.get("operating_hours") or r.get("open_state"))
-    desc = bool(r.get("description"))
-    foto = bool(r.get("thumbnail"))
-    p = 0
-    p += 35 if nota >= 4.7 else 28 if nota >= 4.5 else 20 if nota >= 4.3 else 10
-    p += 20 if avs >= 2000 else 15 if avs >= 500 else 9 if avs >= 100 else 3
-    if site: p += 15
-    if wa:   p += 10
-    if hrs:  p += 10
-    if desc: p += 5
-    if foto: p += 5
-    return min(p, 100), site, hrs, desc, foto
-
-def _salvar_diag(neg, r):
-    score, site_ok, hrs_ok, desc_ok, foto_ok = calc_score(r, neg.wa)
-    d = Diagnostico(
-        neg_id     = neg.id,
-        score      = score,
-        nota       = float(r.get("rating") or neg.r_base or 0),
-        avaliacoes = int(r.get("reviews") or neg.a_base or 0),
-        site_ok    = site_ok,
-        wa_ok      = bool(neg.wa),
-        hrs_ok     = hrs_ok,
-        desc_ok    = desc_ok,
-        foto_ok    = foto_ok,
-        preco      = r.get("price", ""),
-        open_state = r.get("open_state", ""),
-        website    = r.get("website", ""),
-        telefone   = r.get("phone", ""),
-        descricao  = r.get("description", ""),
-        titulo_gmb = r.get("title", ""),
-        raw_json   = json.dumps(r, ensure_ascii=False),
-    )
-    if r.get("data_cid") and not neg.cid:
-        neg.cid = r["data_cid"]
-    db.session.add(d)
-    db.session.commit()
-
-# ══════════════════════════════════════
-#  HELPERS
-# ══════════════════════════════════════
-def score_class(s):
-    if s is None: return "idle"
-    if s >= 75:   return "ok"
-    if s >= 50:   return "warn"
-    return "bad"
-
-app.jinja_env.globals["score_class"] = score_class
-
-# ══════════════════════════════════════
-#  AUTH
-# ══════════════════════════════════════
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "user_id" not in session:
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorated
-
-@app.route("/ping")
-def ping():
-    """Endpoint para UptimeRobot manter o app acordado."""
-    return "ok", 200
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        senha = request.form.get("senha", "")
-        user  = User.query.filter_by(email=email).first()
-        if user and check_password_hash(user.senha, senha):
-            session["user_id"]   = user.id
-            session["user_nome"] = user.nome
-            return redirect(url_for("dashboard"))
-        flash("E-mail ou senha incorretos.", "error")
-    return render_template("login.html")
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
-# ══════════════════════════════════════
-#  DASHBOARD
-# ══════════════════════════════════════
-@app.route("/")
-@login_required
-def dashboard():
-    cat_filter    = request.args.get("cat", "")
-    cidade_filter = request.args.get("cidade", "")
-    negocios      = Negocio.query.filter_by(ativo=True).order_by(Negocio.categoria, Negocio.nome).all()
-    job           = JobStatus.query.first()
-    categorias    = sorted(set(n.categoria for n in negocios if n.categoria))
-    cidades       = sorted(set(n.cidade    for n in negocios if n.cidade))
-    neg_data = []
-    for n in negocios:
-        if cat_filter    and n.categoria != cat_filter:    continue
-        if cidade_filter and n.cidade    != cidade_filter: continue
-        ultimo = n.diagnosticos[0] if n.diagnosticos else None
-        neg_data.append({"neg": n, "ultimo": ultimo})
-    com_diag    = [d for d in neg_data if d["ultimo"]]
-    criticas    = sum(1 for d in com_diag if d["ultimo"].score < 50)
-    sem_site    = sum(1 for d in com_diag if not d["ultimo"].site_ok)
-    media_score = round(sum(d["ultimo"].score for d in com_diag) / len(com_diag)) if com_diag else 0
-    return render_template("dashboard.html",
-        neg_data=neg_data, job=job, categorias=categorias, cidades=cidades,
-        cat_filter=cat_filter, cidade_filter=cidade_filter, criticas=criticas,
-        sem_site=sem_site, media_score=media_score,
-        total=len(negocios), analisadas=len(com_diag)
-    )
-
-# ══════════════════════════════════════
-#  BUSCA
-# ══════════════════════════════════════
-@app.route("/api/buscar")
-@login_required
-def api_buscar():
-    q      = request.args.get("q", "").strip()
-    cidade = request.args.get("cidade", "Brasília").strip()
-    if not q:
-        return jsonify([])
-    try:
-        data    = _serp({"engine": "google_maps", "type": "search", "q": f"{q} {cidade}"})
-        results = data.get("local_results", [])[:8]
-        out = []
-        for r in results:
-            out.append({
-                "titulo":   r.get("title", ""),
-                "endereco": r.get("address", ""),
-                "nota":     r.get("rating", ""),
-                "reviews":  r.get("reviews", 0),
-                "tipo":     r.get("type", ""),
-                "cid":      str(r.get("data_cid", "")),
-                "place_id": r.get("place_id", ""),
-            })
-        return jsonify(out)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# ══════════════════════════════════════
-#  CRUD NEGÓCIOS
-# ══════════════════════════════════════
-@app.route("/negocio/adicionar", methods=["POST"])
-@login_required
-def adicionar_negocio():
-    data = request.get_json() or request.form
-    neg  = Negocio(
-        nome      = data.get("nome", "").strip(),
-        categoria = data.get("categoria", "Geral").strip(),
-        cidade    = data.get("cidade", "Brasília").strip(),
-        wa        = data.get("wa", "").strip(),
-        cid       = data.get("cid", "").strip(),
-        r_base    = float(data.get("nota", 0) or 0),
-        a_base    = int(data.get("reviews", 0) or 0),
-    )
-    db.session.add(neg)
-    db.session.commit()
-    return jsonify({"ok": True, "id": neg.id, "nome": neg.nome})
-
-@app.route("/negocio/<int:neg_id>/editar", methods=["POST"])
-@login_required
-def editar_negocio(neg_id):
-    neg = Negocio.query.get_or_404(neg_id)
-    neg.nome      = request.form.get("nome", neg.nome).strip()
-    neg.categoria = request.form.get("categoria", neg.categoria).strip()
-    neg.cidade    = request.form.get("cidade", neg.cidade).strip()
-    neg.wa        = request.form.get("wa", neg.wa).strip()
-    db.session.commit()
-    return redirect(url_for("negocio", neg_id=neg_id))
-
-@app.route("/negocio/<int:neg_id>/remover", methods=["POST"])
-@login_required
-def remover_negocio(neg_id):
-    neg = Negocio.query.get_or_404(neg_id)
-    neg.ativo = False
-    db.session.commit()
-    return jsonify({"ok": True})
-
-# ══════════════════════════════════════
-#  IMPORTAÇÃO CSV
-# ══════════════════════════════════════
-@app.route("/importar-csv", methods=["POST"])
-@login_required
-def importar_csv():
-    import re as _re
-    f = request.files.get("arquivo")
-    if not f:
-        return jsonify({"ok": False, "msg": "Nenhum arquivo enviado"})
-    try:
-        stream = io.StringIO(f.stream.read().decode("utf-8-sig"), newline=None)
-        reader = csv.DictReader(stream)
-        reader.fieldnames = [c.strip() for c in (reader.fieldnames or [])]
-        def _cidade(end):
-            m = _re.search(r',\s*([^,\-]+?)\s*-\s*[A-Z]{2},', str(end or ''))
-            return m.group(1).strip() if m else 'Brasil'
-        def _cid(url):
-            m = _re.search(r'cid=(\d+)', str(url or ''))
-            return m.group(1) if m else ''
-        def _wa(val):
-            v = str(val or '')
-            if v in ('nan', 'NÃO ENCONTRADO', '#ERROR!', ''): return ''
-            return _re.sub(r'\D', '', v)
-        def _nota(val):
-            try: return float(str(val).replace(',', '.'))
-            except: return 0.0
-        def _avs(val):
-            try: return int(val)
-            except: return 0
-        adicionados = 0
-        for row in reader:
-            nome = (row.get('Nome') or row.get('nome') or '').strip()
-            if not nome: continue
-            neg = Negocio(
-                nome      = nome,
-                categoria = (row.get('Categoria') or row.get('categoria') or 'Geral').strip(),
-                cidade    = _cidade(row.get('Endereço') or row.get('Endereco') or row.get('cidade') or ''),
-                wa        = _wa(row.get('Whatsapp') or row.get('whatsapp') or row.get('wa') or ''),
-                cid       = _cid(row.get('URL Google Maps') or row.get('cid') or ''),
-                r_base    = _nota(row.get('Nota') or row.get('nota') or 0),
-                a_base    = _avs(row.get('Avaliações') or row.get('Avaliacoes') or 0),
-            )
-            db.session.add(neg)
-            adicionados += 1
-        db.session.commit()
-        return jsonify({"ok": True, "adicionados": adicionados})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-# ══════════════════════════════════════
-#  DIAGNÓSTICO
-# ══════════════════════════════════════
-_job_lock   = threading.Lock()
-_grid_jobs  = {}  # neg_id -> {running, done, total, error}
-
-@app.route("/analisar", methods=["POST"])
-@login_required
-def analisar_todas():
-    job = JobStatus.query.first()
-    if job and job.rodando:
-        return jsonify({"ok": False, "msg": "Análise já em execução"})
-    if not job:
-        job = JobStatus()
-        db.session.add(job)
-    total = Negocio.query.filter_by(ativo=True).count()
-    job.rodando = True; job.total = total; job.feitos = 0
-    job.erros = 0; job.iniciado = datetime.utcnow()
-    job.finalizado = None; job.atual = "Iniciando…"
-    db.session.commit()
-    threading.Thread(target=_run_all, daemon=True).start()
-    return jsonify({"ok": True})
-
-def _run_all():
-    with app.app_context():
-        negocios = Negocio.query.filter_by(ativo=True).all()
-        job      = JobStatus.query.first()
-        for i, neg in enumerate(negocios):
-            with _job_lock:
-                job.atual = neg.nome; job.feitos = i
-                db.session.commit()
-            try:
-                r, err = buscar_negocio_api(neg)
-                if r:
-                    _salvar_diag(neg, r)
-                else:
-                    job.erros += 1
-            except Exception:
-                job.erros += 1
-            time.sleep(0.8)
-        job.rodando = False; job.feitos = len(negocios)
-        job.atual = "Concluído"; job.finalizado = datetime.utcnow()
-        db.session.commit()
-
-@app.route("/analisar/<int:neg_id>", methods=["POST"])
-@login_required
-def analisar_um(neg_id):
-    neg = Negocio.query.get_or_404(neg_id)
-    try:
-        r, err = buscar_negocio_api(neg)
-        if r:
-            _salvar_diag(neg, r)
-            return jsonify({"ok": True})
-        return jsonify({"ok": False, "msg": err})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-@app.route("/job-status")
-@login_required
-def job_status():
-    job = JobStatus.query.first()
-    if not job:
-        return jsonify({"rodando": False, "feitos": 0, "total": 0, "atual": "", "erros": 0, "pct": 0})
-    pct = int(job.feitos / job.total * 100) if job.total else 0
-    return jsonify({
-        "rodando":    job.rodando,
-        "feitos":     job.feitos,
-        "total":      job.total,
-        "atual":      job.atual,
-        "erros":      job.erros,
-        "pct":        pct,
-        "finalizado": job.finalizado.strftime("%d/%m %H:%M") if job.finalizado else None,
-    })
-
-@app.route("/negocio/<int:neg_id>/concorrentes", methods=["POST"])
-@login_required
-def buscar_concorrentes_route(neg_id):
-    """Busca concorrentes reais do Google e salva no cache."""
-    neg    = Negocio.query.get_or_404(neg_id)
-    ultimo = neg.diagnosticos[0] if neg.diagnosticos else None
-    try:
-        resultado = _buscar_concorrentes_google(neg, ultimo)
-        return jsonify({"ok": True, "total": len(resultado)})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-
-
-# ══════════════════════════════════════
-#  GEO-GRID
-# ══════════════════════════════════════
-import math as _math
-
-
-def _geocode_cidade(cidade):
-    """Geocodifica a cidade via Nominatim (OpenStreetMap, gratuito, sem API key)."""
-    try:
-        r = requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": f"{cidade}, Brasil", "format": "json", "limit": 1},
-            headers={"User-Agent": "KoffeeGBPAnalyzer/1.0 (koffeemarketing.com.br)"},
-            timeout=6,
-        )
-        data = r.json()
-        if data:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-    except Exception:
-        pass
-    return None, None
-
-def _grid_points(clat, clng, grid_size, radius_km):
-    """Gera os N×N pontos do geo-grid ao redor do centro."""
-    half  = grid_size // 2
-    d_lat = radius_km / 111.0
-    d_lng = radius_km / (111.0 * _math.cos(_math.radians(clat)))
-    pts   = []
-    for row in range(grid_size):
-        for col in range(grid_size):
-            pts.append({
-                "lat":  round(clat + (half - row) * d_lat / max(half, 1), 6),
-                "lng":  round(clng + (col - half) * d_lng / max(half, 1), 6),
-                "rank": None,
-            })
-    return pts
-
-def _rank_em_ponto(neg, lat, lng):
-    """Busca o negócio no Google Maps a partir de um ponto e retorna a posição."""
-    try:
-        data    = _serp({
-            "engine": "google_maps",
-            "type":   "search",
-            "q":      neg.categoria,
-            "ll":     f"@{lat},{lng},14z",
-        })
-        results = data.get("local_results", [])
-        city_words = set(_norm_word(w) for w in neg.cidade.split() if len(w) >= 3)
-        self_words = set(
-            _norm_word(w) for w in neg.nome.split()
-            if len(w) >= 3 and _norm_word(w) not in _STOP
-            and _norm_word(w) not in city_words
-        )
-        for i, r in enumerate(results[:20]):
-            cid_match = neg.cid and str(r.get("data_cid","")) == str(neg.cid)
-            gw = set(_norm_word(w) for w in r.get("title","").split()
-                     if len(w) >= 3 and _norm_word(w) not in _STOP)
-            name_match = bool(self_words & gw) and len(self_words) > 0
-            if cid_match or name_match:
-                return i + 1
-        return 20  # não encontrado no top 20
-    except Exception:
-        return None
-
-def _run_geogrid(neg_id, grid_size, radius_km, clat, clng):
-    """Thread: executa o geo-grid e salva no banco."""
-    with app.app_context():
-        neg   = Negocio.query.get(neg_id)
-        pts   = _grid_points(clat, clng, grid_size, radius_km)
-        total = len(pts)
-        _grid_jobs[neg_id] = {"running": True, "done": 0, "total": total, "error": None}
-
-        for i, pt in enumerate(pts):
-            rank       = _rank_em_ponto(neg, pt["lat"], pt["lng"])
-            pt["rank"] = rank
-            _grid_jobs[neg_id]["done"] = i + 1
-            time.sleep(0.5)  # respeita rate limit SerpAPI
-
-        # Salva resultado
-        GeoGridCache.query.filter_by(neg_id=neg_id).delete()
-        gc = GeoGridCache(
-            neg_id     = neg_id,
-            grid_size  = grid_size,
-            radius_km  = radius_km,
-            center_lat = clat,
-            center_lng = clng,
-            resultados = json.dumps(pts),
-        )
-        db.session.add(gc)
-        db.session.commit()
-        _grid_jobs[neg_id]["running"] = False
-
-@app.route("/negocio/<int:neg_id>/geogrid", methods=["POST"])
-@login_required
-def gerar_geogrid(neg_id):
-    neg = Negocio.query.get_or_404(neg_id)
-    if _grid_jobs.get(neg_id, {}).get("running"):
-        return jsonify({"ok": False, "msg": "Geo-grid já em execução."})
-
-    grid_size = int((request.get_json() or {}).get("grid_size", 5))
-    radius_km = float((request.get_json() or {}).get("radius_km", 1.0))
-    grid_size = max(3, min(7, grid_size))  # limita entre 3 e 7
-
-    # Coordenadas: tenta self → qualquer concorrente → geocodifica a cidade
-    self_cache = ConcorrenteCache.query.filter_by(neg_id=neg_id, is_self=True).first()
-    any_coords = ConcorrenteCache.query.filter_by(neg_id=neg_id)                    .filter(ConcorrenteCache.lat.isnot(None)).first()
-
-    if self_cache and self_cache.lat:
-        clat, clng = self_cache.lat, self_cache.lng
-    elif any_coords:
-        clat, clng = any_coords.lat, any_coords.lng
-    else:
-        # Geocodifica a cidade via Nominatim (sem créditos, sem API key)
-        clat, clng = _geocode_cidade(neg.cidade)
-        if not clat:
-            return jsonify({"ok": False, "msg": f"Não foi possível localizar '{neg.cidade}'. Verifique o nome da cidade do negócio."})
-    total = grid_size ** 2
-    threading.Thread(
-        target=_run_geogrid,
-        args=(neg_id, grid_size, radius_km, clat, clng),
-        daemon=True,
-    ).start()
-    return jsonify({"ok": True, "total": total})
-
-@app.route("/negocio/<int:neg_id>/geogrid/status")
-@login_required
-def geogrid_status(neg_id):
-    job = _grid_jobs.get(neg_id)
-    if not job:
-        # Verifica se já tem resultado salvo
-        gc = GeoGridCache.query.filter_by(neg_id=neg_id).first()
-        if gc:
-            return jsonify({"running": False, "done": gc.grid_size**2,
-                            "total": gc.grid_size**2, "pronto": True})
-        return jsonify({"running": False, "done": 0, "total": 0, "pronto": False})
-    pct = int(job["done"] / job["total"] * 100) if job["total"] else 0
-    return jsonify({**job, "pct": pct, "pronto": not job["running"]})
-
-@app.route("/negocio/<int:neg_id>/geogrid/dados")
-@login_required
-def geogrid_dados(neg_id):
-    gc = GeoGridCache.query.filter_by(neg_id=neg_id).first()
-    if not gc:
-        return jsonify({"ok": False})
-    return jsonify({
-        "ok":         True,
-        "grid_size":  gc.grid_size,
-        "radius_km":  gc.radius_km,
-        "center_lat": gc.center_lat,
-        "center_lng": gc.center_lng,
-        "resultados": json.loads(gc.resultados),
-        "atualizado": gc.atualizado.strftime("%d/%m/%Y %H:%M"),
-    })
-
-# ══════════════════════════════════════
-#  DETALHE DO NEGÓCIO — helpers
-# ══════════════════════════════════════
-def _get_criterios(neg, d):
-    """20 critérios derivados dos dados do banco."""
-    if not d:
-        return [], 0, 0, 0
-    nota = float(d.nota or 0)
-    avs  = int(d.avaliacoes or 0)
-    def st(cond_ok, cond_warn=False):
-        if cond_ok:   return "ok"
-        if cond_warn: return "warn"
-        return "bad"
-    def nota_label(n):
-        if n >= 4.5: return "Excelente"
-        if n >= 4.0: return "Regular — meta: 4.5+"
-        return "Crítica — prioridade máxima"
-    def avs_label(a):
-        if a >= 500: return "Excelente"
-        if a >= 100: return "Bom"
-        return "Baixo — estratégia de captação necessária"
-    criterios = [
-        {"g":"Informações básicas","n":"Nome do negócio",          "s":"ok",                         "i":"Nome cadastrado e verificado no perfil"},
-        {"g":"Informações básicas","n":"Endereço e localização",   "s":"ok",                         "i":"Endereço verificado, pin correto no Google Maps"},
-        {"g":"Informações básicas","n":"Telefone de contato",      "s":st(bool(d.telefone)),         "i":d.telefone or "Telefone não encontrado no perfil"},
-        {"g":"Informações básicas","n":"Site próprio vinculado",   "s":st(d.site_ok),               "i":(d.website[:45]+"…") if d.site_ok and d.website else "Nenhum site vinculado ao perfil"},
-        {"g":"Informações básicas","n":"WhatsApp Business",        "s":st(bool(neg.wa)),             "i":neg.wa or "Sem WhatsApp — perde conversões diretas"},
-        {"g":"Horários","n":"Horário de funcionamento",            "s":st(d.hrs_ok),                 "i":"Todos os dias preenchidos" if d.hrs_ok else "Horários não preenchidos"},
-        {"g":"Horários","n":"Status aberto / fechado",             "s":st(bool(d.open_state), True), "i":d.open_state or "Status não identificado"},
-        {"g":"Horários","n":"Horários especiais e feriados",       "s":"warn",                       "i":"Verificar manualmente no perfil"},
-        {"g":"Fotos","n":"Foto de capa / perfil",                  "s":st(d.foto_ok),                "i":"Foto presente" if d.foto_ok else "Sem foto de capa profissional"},
-        {"g":"Fotos","n":"Logo e identidade visual",               "s":"warn",                       "i":"Verificar resolução mínima (250x250px)"},
-        {"g":"Fotos","n":"Fotos do interior",                      "s":"warn",                       "i":"Verificar quantidade — recomendado mínimo 10"},
-        {"g":"Fotos","n":"Fotos de produtos / cardápio",           "s":"warn",                       "i":"Verificar — impacta diretamente o ranqueamento"},
-        {"g":"Fotos","n":"Fotos do exterior / fachada",            "s":"warn",                       "i":"Facilita a identificação do local pelos clientes"},
-        {"g":"Reputação","n":"Nota média de avaliações",           "s":st(nota>=4.5, nota>=4.0),    "i":str(nota)+"★ — "+nota_label(nota)},
-        {"g":"Reputação","n":"Volume de avaliações",               "s":st(avs>=500, avs>=100),      "i":str(avs)+" avaliações — "+avs_label(avs)},
-        {"g":"Reputação","n":"Taxa de resposta a avaliações",      "s":"warn",                       "i":"Verificar — Google penaliza quem ignora avaliações"},
-        {"g":"Reputação","n":"Publicações (Posts GMB)",            "s":"warn",                       "i":"Verificar data do último post — recomendado 2x/semana"},
-        {"g":"Completude","n":"Descrição do negócio",              "s":st(d.desc_ok),               "i":(d.descricao[:50]+"…") if d.desc_ok and d.descricao else "Campo em branco — perde palavras-chave de SEO"},
-        {"g":"Completude","n":"Preço / faixa de preço",            "s":st(bool(d.preco), False),    "i":d.preco or "Preço não cadastrado no perfil"},
-        {"g":"Completude","n":"Atributos e serviços",              "s":"warn",                       "i":"Verificar: Wi-fi, pagamento, acessibilidade…"},
-    ]
-    bons  = sum(1 for c in criterios if c["s"] == "ok")
-    regs  = sum(1 for c in criterios if c["s"] == "warn")
-    ruins = sum(1 for c in criterios if c["s"] == "bad")
-    return criterios, bons, regs, ruins
-
-
-import unicodedata as _ud
-
-def _norm_word(w):
-    """Normaliza palavra: remove acentos e converte para minúsculo."""
-    return _ud.normalize('NFD', w.lower()).encode('ascii', 'ignore').decode()
-
-# Palavras genéricas que não identificam um negócio específico
-_STOP = {
-    'cafe', 'coffee', 'bar', 'restaurante', 'restaurant', 'lanchonete',
-    'padaria', 'bakery', 'bistro', 'botanica', 'botanic', 'cultural',
-    'conceito', 'gourmet', 'artesanal', 'especial', 'especialidades',
-    'torrefacao', 'mineiro', 'esplanada', 'brunch', 'negocio',
-    'and', 'the', 'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'e',
+    // Só mostra progresso depois de confirmar que o job iniciou
+    document.getElementById('gg-progress').classList.remove('hidden');
+    pollGeogrid(d.total);
+  });
 }
 
-def _buscar_concorrentes_google(neg, ultimo):
-    """
-    Busca concorrentes reais no Google Maps via SerpAPI.
-    Salva resultados em ConcorrenteCache.
-    Retorna lista formatada para o template.
-    """
-    query = f"{neg.categoria} {neg.cidade}"
-    data  = _serp({"engine": "google_maps", "type": "search", "q": query})
-    results = data.get("local_results", [])[:7]
+function pollGeogrid(total) {
+  fetch(`/negocio/${NEG_ID}/geogrid/status`)
+  .then(r => r.json())
+  .then(d => {
+    const pct = total ? Math.round(d.done / total * 100) : 0;
+    document.getElementById('gg-fill').style.width  = pct + '%';
+    document.getElementById('gg-count').textContent = `${d.done} / ${total}`;
+    if (d.pronto && !d.running) {
+      location.reload();
+    } else {
+      setTimeout(() => pollGeogrid(total), 1500);
+    }
+  });
+}
 
-    # Apaga cache antigo deste negócio
-    ConcorrenteCache.query.filter_by(neg_id=neg.id).delete()
+// Geo-Grid map — chamado após Leaflet carregar
+function initGeogridMap() {
+  const el  = document.getElementById('mapa-geogrid');
+  const pts = window._GEOGRID_PTS;
+  if (!el || !pts || !pts.length) return;
 
-    # Palavras significativas do nome (sem stop words, sem nome da cidade, normalizadas)
-    # Exclui cidade para evitar falsos positivos em negócios que usam o nome da cidade
-    city_words = set(_norm_word(w) for w in neg.cidade.split() if len(w) >= 3)
-    self_words = set(
-        _norm_word(w) for w in neg.nome.split()
-        if len(w) >= 3
-        and _norm_word(w) not in _STOP
-        and _norm_word(w) not in city_words
-    )
+  const map = L.map('mapa-geogrid', {zoomControl: true, scrollWheelZoom: false});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 18
+  }).addTo(map);
 
-    lista = []
-    self_found = False
+  const gs = window._GEOGRID_SIZE || 5;
+  const markers = [];
+  pts.forEach(function(pt) {
+    if (pt.lat == null || pt.lng == null) return;
+    var rank  = pt.rank;
+    var color = !rank ? '#6b7280' : rank <= 3 ? '#22c55e' : rank <= 7 ? '#eab308' : rank <= 10 ? '#f97316' : '#ef4444';
+    var label = rank ? (rank + 'º') : '—';
+    var m = L.circleMarker([pt.lat, pt.lng], {
+      radius: 17, fillColor: color, color: '#fff',
+      weight: 2.5, opacity: 1, fillOpacity: 0.95
+    }).addTo(map);
+    m.bindTooltip(label, {permanent: true, direction: 'center', className: 'gg-label'});
+    m.bindPopup('<b>' + (rank ? rank + 'º lugar' : 'Não encontrado (top 20)') + '</b>');
+    markers.push(m);
+  });
 
-    for r in results:
-        score, site_ok, hrs_ok, desc_ok, foto_ok = calc_score(r, "")
-        nome_google = r.get("title", "")
-        # Identifica se é o próprio negócio (CID ou nome)
-        cid_match  = neg.cid and str(r.get("data_cid", "")) == str(neg.cid)
-        google_words_norm = set(
-            _norm_word(w) for w in nome_google.split()
-            if len(w) >= 3 and _norm_word(w) not in _STOP
-        )
-        name_match = bool(self_words & google_words_norm) and len(self_words) > 0
-        is_self    = cid_match or name_match
-        if is_self:
-            self_found = True
+  if (markers.length) {
+    var grp = L.featureGroup(markers);
+    map.fitBounds(grp.getBounds().pad(0.25));
+  }
 
-        gps = r.get("gps_coordinates") or {}
-        c = ConcorrenteCache(
-            neg_id     = neg.id,
-            nome       = nome_google,
-            endereco   = r.get("address", ""),
-            nota       = float(r.get("rating") or 0),
-            avaliacoes = int(r.get("reviews") or 0),
-            score      = score,
-            is_self    = is_self,
-            lat        = float(gps.get("latitude"))  if gps.get("latitude")  else None,
-            lng        = float(gps.get("longitude")) if gps.get("longitude") else None,
-        )
-        db.session.add(c)
-        lista.append({"nome": nome_google, "nota": float(r.get("rating") or 0),
-                      "avs": int(r.get("reviews") or 0), "score": score, "is_self": is_self,
-                      "cidade": r.get("address", "").split(",")[0]})
-
-    # Se o próprio negócio não apareceu, adiciona com dados do banco
-    if not self_found and ultimo:
-        c = ConcorrenteCache(
-            neg_id     = neg.id,
-            nome       = neg.nome,
-            endereco   = neg.cidade,
-            nota       = ultimo.nota,
-            avaliacoes = ultimo.avaliacoes,
-            score      = ultimo.score,
-            is_self    = True,
-        )
-        db.session.add(c)
-        lista.append({"nome": neg.nome, "nota": ultimo.nota,
-                      "avs": ultimo.avaliacoes, "score": ultimo.score,
-                      "is_self": True, "cidade": neg.cidade})
-
-    db.session.commit()
-
-    # Ordena e calcula posição / gap
-    lista.sort(key=lambda x: x["score"], reverse=True)
-    lider = lista[0]["score"] if lista else 0
-    for i, item in enumerate(lista):
-        item["id"]  = None
-        item["pos"] = i + 1
-        item["gap"] = item["score"] - lider
-    return lista
-
-def _get_concorrentes(neg, ultimo):
-    """Lê concorrentes do cache (Google). Retorna [] se ainda não foi buscado.
-    Re-avalia is_self com a lógica corrigida para corrigir caches antigos
-    sem precisar de nova chamada à API.
-    """
-    cached = ConcorrenteCache.query.filter_by(neg_id=neg.id)                .order_by(ConcorrenteCache.score.desc()).all()
-    if not cached:
-        return []
-
-    # Recalcula is_self com lógica corrigida (exclui cidade e stop words)
-    city_words = set(_norm_word(w) for w in neg.cidade.split() if len(w) >= 3)
-    self_words = set(
-        _norm_word(w) for w in neg.nome.split()
-        if len(w) >= 3
-        and _norm_word(w) not in _STOP
-        and _norm_word(w) not in city_words
-    )
-
-    self_found = False
-    lista = []
-    for c in cached:
-        # CID match (mais confiável) ou nome match com lógica corrigida
-        cid_match  = neg.cid and c.nome == neg.nome  # nome exato = é o fallback
-        gw = set(_norm_word(w) for w in c.nome.split()
-                 if len(w) >= 3 and _norm_word(w) not in _STOP)
-        name_match = bool(self_words & gw) and len(self_words) > 0
-        is_self    = cid_match or name_match
-
-        if is_self:
-            self_found = True
-
-        lista.append({
-            "id":      None,
-            "nome":    c.nome,
-            "cidade":  c.endereco.split(",")[0] if c.endereco else neg.cidade,
-            "score":   c.score,
-            "nota":    c.nota,
-            "avs":     c.avaliacoes,
-            "is_self": is_self,
-            "pos":     0,
-            "gap":     0,
-            "lat":     c.lat,
-            "lng":     c.lng,
-        })
-
-    # Se nenhum foi identificado como self, marca o nome exato ou o de menor score
-    if not self_found and ultimo:
-        # Procura pelo nome exato do negócio no cache
-        exact = next((item for item in lista if item["nome"] == neg.nome), None)
-        if exact:
-            exact["is_self"] = True
-        else:
-            # Adiciona o próprio negócio como entrada extra
-            lista.append({
-                "id": None, "nome": neg.nome, "cidade": neg.cidade,
-                "score": ultimo.score, "nota": ultimo.nota,
-                "avs": ultimo.avaliacoes, "is_self": True, "pos": 0, "gap": 0,
-            })
-
-    # Ordena e calcula posição / gap
-    lista.sort(key=lambda x: x["score"], reverse=True)
-    lider = lista[0]["score"] if lista else 0
-    for i, item in enumerate(lista):
-        item["pos"] = i + 1
-        item["gap"] = item["score"] - lider
-    return lista
-
-# ══════════════════════════════════════
-#  DETALHE DO NEGÓCIO — rota
-# ══════════════════════════════════════
-@app.route("/negocio/<int:neg_id>")
-@login_required
-def negocio(neg_id):
-    neg    = Negocio.query.options(joinedload(Negocio.diagnosticos)).get_or_404(neg_id)
-    diags  = neg.diagnosticos
-    ultimo = diags[0] if diags else None
-    historico    = list(reversed(diags[:10]))
-    chart_labels = [d.data.strftime("%d/%m") for d in historico]
-    chart_scores = [d.score for d in historico]
-    chart_notas  = [d.nota  for d in historico]
-    issues = []
-    if ultimo:
-        if not ultimo.wa_ok:
-            issues.append({"crit":True,  "t":"Sem WhatsApp no perfil",      "d":"Clientes não têm como entrar em contato direto pelo perfil Google."})
-        if not ultimo.site_ok:
-            issues.append({"crit":True,  "t":"Sem site próprio vinculado",   "d":"Reduz autoridade e visibilidade nas buscas locais."})
-        if not ultimo.hrs_ok:
-            issues.append({"crit":True,  "t":"Horários não preenchidos",     "d":"O Google penaliza perfis incompletos no ranqueamento."})
-        if not ultimo.desc_ok:
-            issues.append({"crit":False, "t":"Sem descrição do negócio",     "d":"Descrições com palavras-chave melhoram o SEO local."})
-        if ultimo.nota < 4.4:
-            issues.append({"crit":True,  "t":f"Avaliação {ultimo.nota} — abaixo do ideal","d":"Concorrentes com 4.5+ aparecem primeiro nos resultados."})
-        if ultimo.avaliacoes < 150:
-            issues.append({"crit":False, "t":f"Poucas avaliações ({ultimo.avaliacoes})","d":"Estratégia de captação pode mudar isso rapidamente."})
-    criterios, bons, regs, ruins = _get_criterios(neg, ultimo)
-    concorrentes = _get_concorrentes(neg, ultimo)
-    geogrid_obj  = GeoGridCache.query.filter_by(neg_id=neg_id).first()
-    geogrid = None
-    if geogrid_obj:
-        geogrid = {
-            "atualizado": geogrid_obj.atualizado.strftime("%d/%m/%Y %H:%M"),
-            "grid_size":  geogrid_obj.grid_size,
-            "radius_km":  geogrid_obj.radius_km,
-        }
-    return render_template("negocio.html",
-        neg=neg, ultimo=ultimo, diags=diags,
-        chart_labels=json.dumps(chart_labels),
-        chart_scores=json.dumps(chart_scores),
-        chart_notas=json.dumps(chart_notas),
-        issues=issues,
-        criterios=criterios, bons=bons, regs=regs, ruins=ruins,
-        concorrentes=concorrentes,
-        geogrid=geogrid,
-    )
-
-# ══════════════════════════════════════
-#  INIT DB
-# ══════════════════════════════════════
-def init_db():
-    db.create_all()
-    # Cria tabela geogrid se não existir (compatibilidade com DBs antigos)
-    try:
-        db.session.execute(text("SELECT 1 FROM geo_grid_cache LIMIT 1"))
-    except Exception:
-        db.session.rollback()
-        db.create_all()
-    # Migração: adiciona colunas lat/lng se não existirem (para DBs antigos)
-    from sqlalchemy import text
-    for col in ("lat REAL", "lng REAL"):
-        try:
-            db.session.execute(text(f"ALTER TABLE concorrente_cache ADD COLUMN {col}"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-    if not User.query.first():
-        db.session.add(User(
-            nome  = "Kaio Carvalho",
-            email = "kaio@koffeemarketing.com.br",
-            senha = generate_password_hash("koffee2025"),
-        ))
-        db.session.commit()
-        print("✓ Admin criado")
-    if not JobStatus.query.first():
-        db.session.add(JobStatus())
-        db.session.commit()
-
-with app.app_context():
-    init_db()
+  // Popula grade estática para impressão
+  var rows = '', printEl = document.getElementById('geogrid-print-table');
+  if (printEl) {
+    for (var r = 0; r < gs; r++) {
+      rows += '<div>';
+      for (var col2 = 0; col2 < gs; col2++) {
+        var pt2   = pts[r * gs + col2];
+        var rk    = pt2 ? pt2.rank : null;
+        var bg    = !rk ? '#9ca3af' : rk <= 3 ? '#16a34a' : rk <= 7 ? '#ca8a04' : rk <= 10 ? '#ea580c' : '#dc2626';
+        var lbl   = rk ? (rk + 'º') : '—';
+        rows += '<span style="display:inline-block;width:36px;height:36px;line-height:36px;' +
+                'text-align:center;background:' + bg + ';color:#fff;border-radius:50%;' +
+                'font-size:11px;font-weight:700;margin:2px;">' + lbl + '</span>';
+      }
+      rows += '</div>';
+    }
+    printEl.innerHTML = rows;
+  }
+}
 
 
-@app.route('/template-csv')
-@login_required
-def template_csv():
-    from flask import Response
-    csv_content = "nome,categoria,cidade,whatsapp\nMeu Negocio,Categoria,Brasilia,61999999999\n"
-    return Response(csv_content, mimetype='text/csv',
-        headers={'Content-Disposition': 'attachment;filename=template_gbp.csv'})
+// ── Mapa de concorrentes (Leaflet + OpenStreetMap) ──────────────────────
+function initConcorrentesMap() {
+  const el = document.getElementById('mapa-concorrentes');
+  if (!el) return;
 
-if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+  const CONC = {{ concorrentes | tojson }};
+  const pts  = CONC.filter(c => c.lat && c.lng);
+  if (pts.length === 0) { el.style.display = 'none'; return; }
+
+  // Aguarda Leaflet carregar (defer)
+  function tryInit() {
+    const map = L.map('mapa-concorrentes', { zoomControl: true, scrollWheelZoom: false });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/">OpenStreetMap</a>',
+      maxZoom: 18,
+    }).addTo(map);
+
+    const markers = [];
+    pts.forEach(c => {
+      const color  = c.is_self ? '#c8893c'
+                   : c.score >= 75 ? '#22c55e'
+                   : c.score >= 50 ? '#f59e0b'
+                   : '#ef4444';
+      const radius = c.is_self ? 12 : 8;
+      const weight = c.is_self ? 3  : 2;
+
+      const m = L.circleMarker([c.lat, c.lng], {
+        radius, fillColor: color, color: '#fff',
+        weight, opacity: 1, fillOpacity: 0.92
+      }).addTo(map);
+
+      m.bindPopup(
+        `<div style="font-family:DM Sans,sans-serif;min-width:160px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px">${c.nome}</div>
+          <div style="font-size:12px;color:#555">Score: <b>${c.score ?? '—'}/100</b></div>
+          <div style="font-size:12px;color:#555">${c.nota ?? '—'}★ · ${(c.avs||0).toLocaleString('pt-BR')} avaliações</div>
+          ${c.is_self ? '<div style="font-size:11px;color:#c8893c;font-weight:600;margin-top:4px">▶ Você</div>' : ''}
+        </div>`
+      );
+      markers.push(m);
+    });
+
+    // Ajusta o zoom para mostrar todos os pontos
+    const group = L.featureGroup(markers);
+    map.fitBounds(group.getBounds().pad(0.35));
+  }
+  tryInit();
+})();
+
+
+function setCritView(view) {
+  const grid = document.getElementById('crit-grid');
+  const list = document.getElementById('crit-list');
+  const btnG = document.getElementById('btn-grid');
+  const btnL = document.getElementById('btn-list');
+  if (!grid || !list) return;
+  if (view === 'grid') {
+    grid.classList.remove('hidden'); list.classList.add('hidden');
+    btnG.className = btnG.className.replace('border-b1 text-muted hover:text-text hover:border-b2', 'bg-s3 border-b3 text-text');
+    btnL.className = btnL.className.replace('bg-s3 border-b3 text-text', 'border-b1 text-muted hover:text-text hover:border-b2');
+  } else {
+    list.classList.remove('hidden'); grid.classList.add('hidden');
+    btnL.className = btnL.className.replace('border-b1 text-muted hover:text-text hover:border-b2', 'bg-s3 border-b3 text-text');
+    btnG.className = btnG.className.replace('bg-s3 border-b3 text-text', 'border-b1 text-muted hover:text-text hover:border-b2');
+  }
+}
+</script>
+
+
+  {# ── GEO-GRID DE POSICIONAMENTO ── #}
+  <div class="card overflow-hidden mb-5" id="card-geogrid">
+    <div class="px-5 py-4 border-b border-b1 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold uppercase tracking-widest text-muted">Geo-Grid</span>
+        <span class="text-xs text-dim">— ranking por ponto na região</span>
+      </div>
+      <div class="flex items-center gap-2 no-print">
+        {% if geogrid %}
+        <span class="text-xs text-dim">{{ geogrid.atualizado }}</span>
+        {% endif %}
+        <select id="gg-size" class="text-xs border border-b2 rounded-lg px-2 py-1 bg-s2 text-muted">
+          <option value="3">3×3 — 9 créditos</option>
+          <option value="5" selected>5×5 — 25 créditos</option>
+          <option value="7">7×7 — 49 créditos</option>
+        </select>
+        <select id="gg-radius" class="text-xs border border-b2 rounded-lg px-2 py-1 bg-s2 text-muted">
+          <option value="0.5">500 m</option>
+          <option value="1" selected>1 km</option>
+          <option value="2">2 km</option>
+          <option value="3">3 km</option>
+        </select>
+        <button onclick="gerarGeogrid()" id="btn-geogrid"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium border border-b2 text-muted hover:text-car hover:border-car/40 transition-all flex items-center gap-1.5">
+          ⊞ {% if geogrid %}Atualizar Grid{% else %}Gerar Geo-Grid{% endif %}
+        </button>
+      </div>
+    </div>
+
+    {# Progresso #}
+    <div id="gg-progress" class="hidden px-5 py-4 border-b border-b1">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <div class="w-1.5 h-1.5 rounded-full bg-car animate-pulse"></div>
+          <span class="text-xs text-muted">Analisando pontos via Google Maps…</span>
+        </div>
+        <span class="text-xs font-mono text-dim" id="gg-count">0 / 0</span>
+      </div>
+      <div class="h-1.5 bg-s3 rounded-full overflow-hidden">
+        <div id="gg-fill" class="h-full bg-car rounded-full transition-all" style="width:0%"></div>
+      </div>
+    </div>
+
+    {# Mapa ou estado vazio #}
+    {% if geogrid %}
+    <div class="px-5 py-5">
+      <div id="mapa-geogrid" style="height:360px;border-radius:10px;background:#e8eaed;" class="no-print"></div>
+    <script>
+    window._GEOGRID_PTS  = {{ geogrid.resultados | tojson }};
+    window._GEOGRID_SIZE = {{ geogrid.grid_size }};
+    </script>
+    {# Print fallback: grade estática com os números de ranking #}
+    <div id="geogrid-print" class="hidden">
+      <p class="text-xs text-muted mb-3">Geo-Grid {{ geogrid.grid_size }}×{{ geogrid.grid_size }} · Raio {{ geogrid.radius_km }} km · {{ geogrid.atualizado }}</p>
+      <div id="geogrid-print-table" style="font-family:monospace;line-height:1.8;"></div>
+    </div>
+      <div class="flex items-center gap-4 mt-3 flex-wrap">
+        <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full" style="background:#22c55e"></div><span class="text-xs text-muted">1º – 3º lugar</span></div>
+        <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full" style="background:#eab308"></div><span class="text-xs text-muted">4º – 7º lugar</span></div>
+        <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full" style="background:#f97316"></div><span class="text-xs text-muted">8º – 10º lugar</span></div>
+        <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full" style="background:#ef4444"></div><span class="text-xs text-muted">11º+ / não encontrado</span></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="px-5 py-10 text-center">
+      <div class="text-2xl mb-2">⊞</div>
+      <div class="text-sm font-medium text-muted mb-1">Geo-Grid não gerado</div>
+      <div class="text-xs text-dim">Selecione o tamanho e raio e clique em "Gerar Geo-Grid"</div>
+      <div class="text-xs text-dim mt-1">⚠ Requer que os concorrentes já tenham sido buscados</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- HISTÓRICO DE ANÁLISES -->
+  {% if diags|length > 1 %}
+  <div class="card overflow-hidden mb-5">
+    <div class="px-5 py-4 border-b border-b1"><span class="text-xs font-semibold uppercase tracking-widest text-gray-600">Histórico de Análises</span></div>
+    <table class="w-full text-xs">
+      <thead><tr class="border-b border-b1">
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Data</th>
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Score</th>
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Nota</th>
+        <th class="px-4 py-3 text-left text-gray-600 uppercase tracking-wider">Avaliações</th>
+        <th class="px-4 py-3 text-center text-gray-600 uppercase tracking-wider">Site</th>
+        <th class="px-4 py-3 text-center text-gray-600 uppercase tracking-wider">Horários</th>
+        <th class="px-4 py-3 text-center text-gray-600 uppercase tracking-wider">Descrição</th>
+      </tr></thead>
+      <tbody>
+        {% for d in diags[:10] %}
+        <tr class="border-b border-b1/50 hover:bg-b1/30">
+          <td class="px-4 py-3 font-mono text-gray-500">{{ d.data.strftime("%d/%m/%Y %H:%M") }}</td>
+          <td class="px-4 py-3"><span class="score-{{ score_class(d.score) }} px-2 py-0.5 rounded font-bold font-mono">{{ d.score }}</span></td>
+          <td class="px-4 py-3 text-warn">{{ d.nota }}⭐</td>
+          <td class="px-4 py-3 font-mono text-gray-500">{{ "{:,}".format(d.avaliacoes) }}</td>
+          <td class="px-4 py-3 text-center">{% if d.site_ok %}<span class="text-ok">✓</span>{% else %}<span class="text-bad">✗</span>{% endif %}</td>
+          <td class="px-4 py-3 text-center">{% if d.hrs_ok %}<span class="text-ok">✓</span>{% else %}<span class="text-bad">✗</span>{% endif %}</td>
+          <td class="px-4 py-3 text-center">{% if d.desc_ok %}<span class="text-ok">✓</span>{% else %}<span class="text-bad">✗</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="card p-10 text-center text-gray-600">
+    <div class="text-3xl mb-3 opacity-30">☕</div>
+    <div class="font-syne text-sm">Nenhum diagnóstico ainda</div>
+    <div class="text-xs mt-2">Clique em "Reanalisar agora" para buscar os dados.</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- MODAL EDITAR -->
+<div id="modalEditar" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
+  <div class="card w-full max-w-md">
+    <div class="p-5 border-b border-b1 flex justify-between items-center">
+      <h2 class="font-syne font-bold text-sm">Editar negócio</h2>
+      <button onclick="fecharEditar()" class="text-gray-600 hover:text-bad">✕</button>
+    </div>
+    <form action="{{ url_for('editar_negocio', neg_id=neg.id) }}" method="POST" class="p-5 space-y-3">
+      <div><label class="block text-xs text-gray-600 mb-1">Nome</label><input type="text" name="nome" value="{{ neg.nome }}"/></div>
+      <div><label class="block text-xs text-gray-600 mb-1">Categoria</label><input type="text" name="categoria" value="{{ neg.categoria }}"/></div>
+      <div><label class="block text-xs text-gray-600 mb-1">Cidade</label><input type="text" name="cidade" value="{{ neg.cidade }}"/></div>
+      <div><label class="block text-xs text-gray-600 mb-1">WhatsApp</label><input type="text" name="wa" value="{{ neg.wa }}"/></div>
+      <button type="submit" class="btn-car w-full py-2 rounded-lg text-xs uppercase tracking-wider">Salvar</button>
+    </form>
+  </div>
+</div>
+
+<style>
+  .score-num-ok{color:#00e676}.score-num-warn{color:#ffab00}.score-num-bad{color:#ff5252}.score-num-idle{color:#444}
+  .score-lbl-ok{color:#00e676}.score-lbl-warn{color:#ffab00}.score-lbl-bad{color:#ff5252}
+</style>
+{%- set has_map = (concorrentes and concorrentes|selectattr("lat")|list|length > 0) or geogrid -%}
+{% if has_map %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+{% endif %}
+<style>
+@media print {
+  /* Esconde chrome da UI */
+  .no-print, nav, #btn-grid, #btn-list, #btn-concorrentes,
+  #mapa-concorrentes, #mapa-geogrid, #gg-progress, #geogrid-controls,
+  #bar-chart-concorrentes, #evolucao-card { display: none !important; }
+
+  /* Esconde canvas — nao imprimem */
+  canvas { display: none !important; }
+
+  /* Mostra fallback de score no gauge */
+  #gauge-print-fallback { display: block !important; }
+  /* Mostra grade estática do geo-grid no print */
+  #geogrid-print { display: block !important; }
+
+  /* Fundo branco em tudo */
+  body, .card { background: #fff !important; }
+  body { color: #111 !important; font-size: 12px; }
+
+  /* Bordas visiveis no branco */
+  .card { border: 1px solid #d1d5db !important; border-radius: 8px; margin-bottom: 12px !important; }
+  .border-b, .border-b1 { border-color: #e5e7eb !important; }
+
+  /* Cores de status */
+  .text-ok, .score-num-ok, .score-lbl-ok { color: #16a34a !important; }
+  .text-warn, .score-num-warn, .score-lbl-warn { color: #d97706 !important; }
+  .text-bad, .score-num-bad, .score-lbl-bad { color: #dc2626 !important; }
+  .text-car, .border-car { color: #b45309 !important; }
+  .text-muted, .text-gray-600 { color: #4b5563 !important; }
+  .text-dim, .text-gray-400, .text-gray-500 { color: #9ca3af !important; }
+  .text-text { color: #111 !important; }
+
+  /* Badges checklist */
+  .chk-ok  { background: #f0fdf4 !important; color: #16a34a !important; border: 1px solid #bbf7d0 !important; }
+  .chk-no  { background: #fef2f2 !important; color: #dc2626 !important; border: 1px solid #fecaca !important; }
+  .chk-ver { background: #fffbeb !important; color: #d97706 !important; border: 1px solid #fde68a !important; }
+
+  /* Badges score */
+  .score-ok   { background: #f0fdf4 !important; color: #16a34a !important; }
+  .score-warn { background: #fffbeb !important; color: #d97706 !important; }
+  .score-bad  { background: #fef2f2 !important; color: #dc2626 !important; }
+
+  /* Criterios: lista no print, grade oculta */
+  #crit-grid { display: none !important; }
+  #crit-list { display: block !important; }
+  .bg-ok   { background: #16a34a !important; }
+  .bg-warn { background: #d97706 !important; }
+  .bg-bad  { background: #dc2626 !important; }
+
+  /* Issues */
+  .bg-car\/5 { background: #fffbeb !important; }
+
+  /* Tabelas */
+  table td, table th { color: #111 !important; border-color: #e5e7eb !important; }
+  .bg-car\/5 td { background: #fef3c7 !important; }
+
+  /* Cards nao quebram no meio */
+  .card { break-inside: avoid; page-break-inside: avoid; }
+
+  /* Modal oculto */
+  #modalEditar { display: none !important; }
+
+  /* Margem da pagina impressa */
+  @page { margin: 1.5cm; size: A4; }
+  /* Leaflet geo-grid rank labels */
+  .gg-rank-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    line-height: 1;
+  }
+  .gg-rank-label::before { display: none; }
+  /* Map containers */
+  #mapa-geogrid .leaflet-container,
+  #mapa-concorrentes .leaflet-container { background: #e8eaed !important; }
+
+    /* Evita quebra dentro de cards */
+    .card { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+    /* Evita quebra dentro de linhas de tabela */
+    table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+    /* Quebra de página antes do posicionamento */
+    #card-posicionamento { page-break-before: always !important; break-before: page !important; }
+
+    /* Compacta espaçamentos para caber mais em cada página */
+    .px-5 { padding-left: 12px !important; padding-right: 12px !important; }
+    .py-4 { padding-top:  8px !important; padding-bottom:  8px !important; }
+    .py-3 { padding-top:  6px !important; padding-bottom:  6px !important; }
+    .mb-5 { margin-bottom: 10px !important; }
+
+    /* Critérios: fonte menor para caber tudo numa página */
+    #crit-list table { font-size: 10px !important; }
+    #crit-list td, #crit-list th { padding: 5px 10px !important; }
+}
+</style>
+
+<script>
+const SCORE   = {{ ultimo.score if ultimo else 0 }};
+const LABELS  = {{ chart_labels|safe }};
+const SCORES  = {{ chart_scores|safe }};
+const NOTAS   = {{ chart_notas|safe }};
+const NEG_ID  = {{ neg.id }};
+
+(function(){
+  const c = document.getElementById('gaugeChart'); if(!c) return;
+  const ctx = c.getContext('2d');
+  const cx=80,cy=80,r=60;
+  const color = SCORE>=75?'#00e676':SCORE>=50?'#ffab00':'#ff5252';
+  ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,2*Math.PI);ctx.strokeStyle='#1e1e1e';ctx.lineWidth=10;ctx.lineCap='round';ctx.stroke();
+  if(SCORE>0){const end=Math.PI+(SCORE/100)*Math.PI;ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,end);ctx.strokeStyle=color;ctx.lineWidth=10;ctx.lineCap='round';ctx.stroke();}
+  ctx.fillStyle=color;ctx.font='bold 22px Syne,sans-serif';ctx.textAlign='center';ctx.fillText(SCORE,cx,cy+8);
+  ctx.fillStyle='#666';ctx.font='600 9px sans-serif';ctx.fillText(SCORE>=75?'BOM':SCORE>=50?'REGULAR':'CRITICO',cx,cy+26);
+})();
+
+const ev = document.getElementById('evolChart');
+if(ev && LABELS.length>1){
+  new Chart(ev,{type:'line',data:{labels:LABELS,datasets:[
+    {label:'Score GMB',data:SCORES,borderColor:SCORE>=75?'#00e676':SCORE>=50?'#ffab00':'#ff5252',backgroundColor:SCORE>=75?'rgba(0,230,118,.08)':SCORE>=50?'rgba(255,171,0,.08)':'rgba(255,82,82,.08)',tension:.4,fill:true,pointRadius:4},
+    {label:'Nota Google',data:NOTAS,borderColor:'#e8b96a',backgroundColor:'transparent',tension:.4,pointRadius:3,yAxisID:'y2',borderDash:[4,4]}
+  ]},options:{responsive:true,plugins:{legend:{labels:{color:'#666',font:{size:11}}}},scales:{x:{ticks:{color:'#444'},grid:{color:'#1a1a1a'}},y:{ticks:{color:'#666'},grid:{color:'#1a1a1a'},min:0,max:100},y2:{ticks:{color:'#e8b96a'},grid:{display:false},position:'right',min:3.5,max:5.1}}}});
+}
+
+
+function buscarConcorrentes() {
+  const btn  = document.getElementById('btn-concorrentes');
+  const icon = document.getElementById('icon-conc');
+  if (!btn) return;
+  btn.disabled = true;
+  if (icon) icon.textContent = '⏳';
+  btn.style.color = '#f59e0b';
+  fetch(`/negocio/${NEG_ID}/concorrentes`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        location.reload();
+      } else {
+        alert('Erro ao buscar concorrentes: ' + d.msg);
+        btn.disabled = false;
+        if (icon) icon.textContent = '↺';
+        btn.style.color = '';
+      }
+    })
+    .catch(() => {
+      btn.disabled = false;
+      if (icon) icon.textContent = '↺';
+    });
+}
+
+function analisarAgora(){
+  const btn=event.target; btn.textContent='⏳ Buscando…'; btn.disabled=true;
+  fetch(`/analisar/${NEG_ID}`,{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok) location.reload(); else{btn.textContent='✗ Erro';btn.disabled=false;alert(d.msg);}
+  });
+}
+
+function analisarUm(negId) {
+  const btn = document.getElementById('btn-analisar-' + negId);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  fetch(`/analisar/${negId}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) location.reload();
+      else {
+        alert('Erro: ' + (d.msg || 'Tente novamente'));
+        if (btn) { btn.disabled = false; btn.textContent = '↺'; }
+      }
+    });
+}
+
+function abrirEditar(){ document.getElementById('modalEditar').classList.replace('hidden','flex'); }
+function fecharEditar(){ document.getElementById('modalEditar').classList.replace('flex','hidden'); }
+</script>
+{% if has_map %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+  // Leaflet está pronto — inicializa os mapas
+  if (typeof initConcorrentesMap === 'function') initConcorrentesMap();
+  if (typeof initGeogridMap     === 'function') initGeogridMap();
+</script>
+{% endif %}
+{% endblock %}
