@@ -330,7 +330,7 @@
 
   {# Mapa de concorrentes #}
   <div class="px-5 pt-5 pb-3 border-b border-b1">
-    <div id="mapa-concorrentes" style="height:260px;border-radius:10px;overflow:hidden;"></div>
+    <div id="mapa-concorrentes" style="height:260px;border-radius:10px;background:#e8eaed;"></div>
   </div>
 
   {# Gráfico de barras visual #}
@@ -463,12 +463,6 @@
 <script>
 
 // ── Geo-Grid ──────────────────────────────────────────────────────────
-function initGeogridMap() {
-  const el = document.getElementById('mapa-geogrid');
-  if (!el) return;
-  tryRender();
-}
-
 function gerarGeogrid() {
   const size   = document.getElementById('gg-size').value;
   const radius = document.getElementById('gg-radius').value;
@@ -511,69 +505,57 @@ function pollGeogrid(total) {
   });
 }
 
-// Renderiza o geo-grid — chamado após Leaflet carregar
-function tryRender() {
-    fetch(`/negocio/${NEG_ID}/geogrid/dados`)
-    .then(r => r.json())
-    .then(d => {
-      if (!d.ok) return;
+// Geo-Grid map — chamado após Leaflet carregar
+function initGeogridMap() {
+  const el  = document.getElementById('mapa-geogrid');
+  const pts = window._GEOGRID_PTS;
+  if (!el || !pts || !pts.length) return;
 
-      // Popula grade estática para impressão
-      const gs   = d.grid_size;
-      const rows = [];
-      for (let row = 0; row < gs; row++) {
-        let cells = '';
-        for (let col = 0; col < gs; col++) {
-          const pt    = d.resultados[row * gs + col];
-          const rank  = pt ? pt.rank : null;
-          const color = !rank ? '#9ca3af' : rank <= 3 ? '#16a34a' : rank <= 7 ? '#ca8a04' : rank <= 10 ? '#ea580c' : '#dc2626';
-          const label = rank ? `${rank}º` : '—';
-          cells += `<span style="display:inline-block;width:36px;height:36px;line-height:36px;text-align:center;background:${color};color:#fff;border-radius:50%;font-size:11px;font-weight:700;margin:2px;">${label}</span>`;
-        }
-        rows.push(`<div>${cells}</div>`);
-      }
-      const el = document.getElementById('geogrid-print-table');
-      if (el) el.innerHTML = rows.join('');
+  const map = L.map('mapa-geogrid', {zoomControl: true, scrollWheelZoom: false});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 18
+  }).addTo(map);
 
-      const map = L.map('mapa-geogrid', {zoomControl: true, scrollWheelZoom: false});
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap', maxZoom: 18
-      }).addTo(map);
+  const gs = window._GEOGRID_SIZE || 5;
+  const markers = [];
+  pts.forEach(function(pt) {
+    if (pt.lat == null || pt.lng == null) return;
+    var rank  = pt.rank;
+    var color = !rank ? '#6b7280' : rank <= 3 ? '#22c55e' : rank <= 7 ? '#eab308' : rank <= 10 ? '#f97316' : '#ef4444';
+    var label = rank ? (rank + 'º') : '—';
+    var m = L.circleMarker([pt.lat, pt.lng], {
+      radius: 17, fillColor: color, color: '#fff',
+      weight: 2.5, opacity: 1, fillOpacity: 0.95
+    }).addTo(map);
+    m.bindTooltip(label, {permanent: true, direction: 'center', className: 'gg-label'});
+    m.bindPopup('<b>' + (rank ? rank + 'º lugar' : 'Não encontrado (top 20)') + '</b>');
+    markers.push(m);
+  });
 
-      const markers = [];
-      d.resultados.forEach(pt => {
-        if (!pt.lat || !pt.lng) return;
-        const rank = pt.rank;
-        const color = !rank     ? '#6b7280'
-                    : rank <= 3  ? '#22c55e'
-                    : rank <= 7  ? '#eab308'
-                    : rank <= 10 ? '#f97316'
-                    :              '#ef4444';
-        const label = rank ? String(rank) : '—';
-
-        const icon = L.divIcon({
-          className: '',
-          html: `<div style="
-            width:34px;height:34px;border-radius:50%;
-            background:${color};color:#fff;border:2px solid rgba(255,255,255,0.8);
-            display:flex;align-items:center;justify-content:center;
-            font-size:12px;font-weight:700;font-family:monospace;
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);">${label}</div>`,
-          iconSize: [34, 34], iconAnchor: [17, 17],
-        });
-
-        const m = L.marker([pt.lat, pt.lng], {icon}).addTo(map);
-        m.bindPopup(`<b>${rank ? rank + 'º lugar' : 'Não encontrado (top 20)'}</b><br>
-          <span style="font-size:11px;color:#666">${pt.lat.toFixed(4)}, ${pt.lng.toFixed(4)}</span>`);
-        markers.push(m);
-      });
-
-      if (markers.length) {
-        const group = L.featureGroup(markers);
-        map.fitBounds(group.getBounds().pad(0.2));
-      }
-    });
+  if (markers.length) {
+    var grp = L.featureGroup(markers);
+    map.fitBounds(grp.getBounds().pad(0.25));
   }
+
+  // Popula grade estática para impressão
+  var rows = '', printEl = document.getElementById('geogrid-print-table');
+  if (printEl) {
+    for (var r = 0; r < gs; r++) {
+      rows += '<div>';
+      for (var col2 = 0; col2 < gs; col2++) {
+        var pt2   = pts[r * gs + col2];
+        var rk    = pt2 ? pt2.rank : null;
+        var bg    = !rk ? '#9ca3af' : rk <= 3 ? '#16a34a' : rk <= 7 ? '#ca8a04' : rk <= 10 ? '#ea580c' : '#dc2626';
+        var lbl   = rk ? (rk + 'º') : '—';
+        rows += '<span style="display:inline-block;width:36px;height:36px;line-height:36px;' +
+                'text-align:center;background:' + bg + ';color:#fff;border-radius:50%;' +
+                'font-size:11px;font-weight:700;margin:2px;">' + lbl + '</span>';
+      }
+      rows += '</div>';
+    }
+    printEl.innerHTML = rows;
+  }
+}
 
 
 // ── Mapa de concorrentes (Leaflet + OpenStreetMap) ──────────────────────
@@ -600,7 +582,7 @@ function initConcorrentesMap() {
                    : c.score >= 75 ? '#22c55e'
                    : c.score >= 50 ? '#f59e0b'
                    : '#ef4444';
-      const radius = c.is_self ? 11 : 8;
+      const radius = c.is_self ? 12 : 8;
       const weight = c.is_self ? 3  : 2;
 
       const m = L.circleMarker([c.lat, c.lng], {
@@ -692,7 +674,11 @@ function setCritView(view) {
     {# Mapa ou estado vazio #}
     {% if geogrid %}
     <div class="px-5 py-5">
-      <div id="mapa-geogrid" style="height:360px;border-radius:10px;overflow:hidden;" class="no-print"></div>
+      <div id="mapa-geogrid" style="height:360px;border-radius:10px;background:#e8eaed;" class="no-print"></div>
+    <script>
+    window._GEOGRID_PTS  = {{ geogrid.resultados | tojson }};
+    window._GEOGRID_SIZE = {{ geogrid.grid_size }};
+    </script>
     {# Print fallback: grade estática com os números de ranking #}
     <div id="geogrid-print" class="hidden">
       <p class="text-xs text-muted mb-3">Geo-Grid {{ geogrid.grid_size }}×{{ geogrid.grid_size }} · Raio {{ geogrid.radius_km }} km · {{ geogrid.atualizado }}</p>
@@ -845,6 +831,21 @@ function setCritView(view) {
 
   /* Margem da pagina impressa */
   @page { margin: 1.5cm; size: A4; }
+  /* Leaflet geo-grid rank labels */
+  .gg-rank-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    line-height: 1;
+  }
+  .gg-rank-label::before { display: none; }
+  /* Map containers */
+  #mapa-geogrid .leaflet-container,
+  #mapa-concorrentes .leaflet-container { background: #e8eaed !important; }
 
     /* Evita quebra dentro de cards */
     .card { page-break-inside: avoid !important; break-inside: avoid !important; }
