@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ neg.nome }} — GBP Analyzer{% if has_map %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+  // Leaflet está pronto — inicializa os mapas
+  if (typeof initConcorrentesMap === 'function') initConcorrentesMap();
+  if (typeof initGeogridMap     === 'function') initGeogridMap();
+</script>
 {% endif %}
 {% endblock %}
 {% block content %}
@@ -458,6 +463,12 @@
 <script>
 
 // ── Geo-Grid ──────────────────────────────────────────────────────────
+function initGeogridMap() {
+  const el = document.getElementById('mapa-geogrid');
+  if (!el) return;
+  tryRender();
+}
+
 function gerarGeogrid() {
   const size   = document.getElementById('gg-size').value;
   const radius = document.getElementById('gg-radius').value;
@@ -500,11 +511,8 @@ function pollGeogrid(total) {
   });
 }
 
-// Renderiza o geo-grid no mapa após o Leaflet carregar
-(function renderGeogrid() {
-  const el = document.getElementById('mapa-geogrid');
-  if (!el) return;
-  function tryRender() {
+// Renderiza o geo-grid — chamado após Leaflet carregar
+function tryRender() {
     fetch(`/negocio/${NEG_ID}/geogrid/dados`)
     .then(r => r.json())
     .then(d => {
@@ -566,11 +574,10 @@ function pollGeogrid(total) {
       }
     });
   }
-  tryRender();
-})();
+
 
 // ── Mapa de concorrentes (Leaflet + OpenStreetMap) ──────────────────────
-(function initMap() {
+function initConcorrentesMap() {
   const el = document.getElementById('mapa-concorrentes');
   if (!el) return;
 
@@ -938,5 +945,10 @@ function fecharEditar(){ document.getElementById('modalEditar').classList.replac
 </script>
 {% if has_map %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+  // Leaflet está pronto — inicializa os mapas
+  if (typeof initConcorrentesMap === 'function') initConcorrentesMap();
+  if (typeof initGeogridMap     === 'function') initGeogridMap();
+</script>
 {% endif %}
 {% endblock %}
